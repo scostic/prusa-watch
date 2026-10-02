@@ -1,0 +1,11 @@
+config.local.json
+secrets.yaml
+.esphome/
+snapshots/
+eval/*/
+*.jpg
+!docs/*.jpg
+!docs/*.png
+__pycache__/
+*.pyc
+.venv/

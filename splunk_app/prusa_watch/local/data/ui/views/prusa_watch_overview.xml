@@ -1,0 +1,192 @@
+<form version="1.1" theme="light">
+  <label>Prusa Watch - Overview</label>
+  <description>AI watchdog for the Prusa MK3.5S: verdicts, alerts, printer telemetry and Bedrock cost.</description>
+  <search id="base">
+    <query>index=prusa_watch sourcetype="prusa:watch" $job_filter$
+| fields _time type job_id state previous_state progress axis_z temp_nozzle target_nozzle temp_bed target_bed fan_hotend fan_print status issue confidence description part_visible evidence downgraded confirm_status streak action subject sent error change_pct latency_ms input_tokens output_tokens cost_usd</query>
+    <earliest>$time.earliest$</earliest>
+    <latest>$time.latest$</latest>
+  </search>
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="time" searchWhenChanged="true">
+      <label>Time range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="job_filter" searchWhenChanged="true">
+      <label>Print job</label>
+      <choice value="">All jobs</choice>
+      <default></default>
+      <fieldForLabel>label</fieldForLabel>
+      <fieldForValue>value</fieldForValue>
+      <search>
+        <query>index=prusa_watch sourcetype="prusa:watch" type=check job_id=*
+| stats min(_time) as start by job_id
+| sort - start
+| eval label="Job ".job_id." (".strftime(start,"%Y-%m-%d %H:%M").")", value="job_id=".job_id</query>
+        <earliest>-30d@d</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <title>Watchdog last seen</title>
+      <single>
+        <search>
+          <query>index=prusa_watch sourcetype="prusa:watch" | stats max(_time) as last | eval minutes_ago=round((now()-last)/60) | fields minutes_ago</query>
+          <earliest>-7d</earliest>
+          <latest>now</latest>
+          <refresh>2m</refresh>
+        </search>
+        <option name="underLabel">minutes ago</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[10,15]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Checks</title>
+      <single>
+        <search base="base"><query>search type=check | stats count</query></search>
+        <option name="underLabel">vision checks</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Failure verdicts</title>
+      <single>
+        <search base="base"><query>search type=check status=failure | stats count</query></search>
+        <option name="rangeColors">["0x53a051","0xdc4e41"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Emails sent</title>
+      <single>
+        <search base="base"><query>search type=email sent=true | stats count</query></search>
+      </single>
+    </panel>
+    <panel>
+      <title>Errors</title>
+      <single>
+        <search base="base"><query>search type=error | stats count</query></search>
+        <option name="rangeColors">["0x53a051","0xf8be34"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Bedrock cost (est.)</title>
+      <single>
+        <search base="base"><query>search type=check | stats sum(cost_usd) as usd | eval usd=round(usd,3)</query></search>
+        <option name="unit">$</option>
+        <option name="unitPosition">before</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Verdicts over time</title>
+      <chart>
+        <search base="base"><query>search type=check | timechart span=5m count by status</query></search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.fieldColors">{"ok":0x53A051,"warning":0xF8BE34,"failure":0xDC4E41,"camera_problem":0x708794}</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Issues detected</title>
+      <chart>
+        <search base="base"><query>search type=check issue!=none | stats count by issue | sort - count</query></search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.legend.placement">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Temperatures</title>
+      <chart>
+        <search base="base"><query>search type=check | timechart span=2m avg(temp_nozzle) as nozzle avg(target_nozzle) as nozzle_target avg(temp_bed) as bed avg(target_bed) as bed_target</query></search>
+        <option name="charting.chart">line</option>
+        <option name="charting.axisTitleY.text">°C</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Progress, Z and fans</title>
+      <chart>
+        <search base="base"><query>search type=check | timechart span=2m max(progress) as progress_pct max(axis_z) as z_mm avg(fan_hotend) as hotend_fan_rpm avg(fan_print) as print_fan_rpm</query></search>
+        <option name="charting.chart">line</option>
+        <option name="charting.axisY2.enabled">1</option>
+        <option name="charting.chart.overlayFields">hotend_fan_rpm,print_fan_rpm</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Model confidence and frame change</title>
+      <chart>
+        <search base="base"><query>search type=check | eval confidence_pct=confidence*100 | timechart span=2m avg(confidence_pct) as confidence_pct avg(change_pct) as frame_change_pct max(streak) as failure_streak</query></search>
+        <option name="charting.chart">line</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Non-OK verdicts, alerts and actions</title>
+      <table>
+        <search base="base"><query>search (type=check status!=ok) OR type=email OR type=error OR (type=state state IN ("ERROR","ATTENTION","FINISHED","STOPPED"))
+| eval detail=coalesce(description, subject, error, "state ".previous_state." -> ".state)
+| eval confidence=if(isnotnull(confidence), round(confidence*100)."%", null())
+| table _time type job_id progress status issue confidence part_visible confirm_status downgraded streak action detail
+| sort - _time</query></search>
+        <option name="count">15</option>
+        <option name="drilldown">none</option>
+        <format type="color" field="status">
+          <colorPalette type="map">{"failure":#DC4E41,"warning":#F8BE34,"camera_problem":#708794}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Print jobs</title>
+      <table>
+        <search>
+          <query>index=prusa_watch sourcetype="prusa:watch" type=check job_id=*
+| stats min(_time) as start max(_time) as last_seen max(progress) as progress count as checks
+        count(eval(status="failure")) as failures count(eval(status="warning")) as warnings
+        sum(cost_usd) as cost_usd by job_id
+| eval start=strftime(start,"%Y-%m-%d %H:%M"), last_seen=strftime(last_seen,"%Y-%m-%d %H:%M"), cost_usd=round(cost_usd,3)
+| sort - start</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Bedrock latency and tokens</title>
+      <chart>
+        <search base="base"><query>search type=check | timechart span=10m avg(latency_ms) as latency_ms avg(input_tokens) as input_tokens</query></search>
+        <option name="charting.chart">line</option>
+        <option name="charting.axisY2.enabled">1</option>
+        <option name="charting.chart.overlayFields">input_tokens</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+  </row>
+</form>

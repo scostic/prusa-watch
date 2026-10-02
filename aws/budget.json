@@ -1,0 +1,6 @@
+{
+  "BudgetName": "prusa-watch-monthly",
+  "BudgetLimit": { "Amount": "10", "Unit": "USD" },
+  "BudgetType": "COST",
+  "TimeUnit": "MONTHLY"
+}

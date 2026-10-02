@@ -1,0 +1,76 @@
+name: Prusa Watch
+version: "0.4.1"
+slug: prusa_watch
+url: https://github.com/scostic/prusa-watch
+description: AI print-failure watchdog for a Prusa printer + Buddy3D camera (Amazon Bedrock vision, SES email alerts)
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+homeassistant_api: true
+map:
+  - share:rw
+options:
+  printer_host: "192.168.1.X"
+  prusalink_api_key: ""
+  prusalink_username: maker
+  prusalink_password: ""
+  camera_url: "rtsp://192.168.1.Y/live"
+  camera_rotate: "0"
+  aws_region: eu-central-1
+  aws_access_key_id: ""
+  aws_secret_access_key: ""
+  bedrock_model_id: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+  email_from: ""
+  email_to: ""
+  check_interval_s: 60
+  compare_minutes: 5
+  failure_threshold: 3
+  min_confidence: 0.6
+  confirm_failures: true
+  alert_cooldown_min: 30
+  notify_finished: true
+  auto_action: none
+  auto_action_threshold: 5
+  ha_sensor: true
+  heartbeat_min: 5
+  cloudwatch_heartbeat: true
+  blind_alert_min: 10
+  hec_url: ""
+  hec_token: ""
+  hec_index: prusa_watch
+  hec_verify_tls: true
+  log_level: info
+schema:
+  printer_host: str
+  prusalink_api_key: password?
+  prusalink_username: str
+  prusalink_password: password?
+  camera_url: str
+  camera_rotate: list(0|90|180|270)
+  aws_region: str
+  aws_access_key_id: str
+  aws_secret_access_key: password
+  bedrock_model_id: str
+  email_from: str
+  email_to: str
+  check_interval_s: int(20,600)
+  compare_minutes: int(1,30)
+  failure_threshold: int(1,20)
+  min_confidence: float(0.3,1)
+  confirm_failures: bool
+  alert_cooldown_min: int(1,1440)
+  notify_finished: bool
+  auto_action: list(none|pause|stop)
+  auto_action_threshold: int(1,30)
+  ha_sensor: bool
+  heartbeat_min: int(1,60)
+  cloudwatch_heartbeat: bool
+  blind_alert_min: int(3,120)
+  hec_url: str?
+  hec_token: password?
+  hec_index: str?
+  hec_verify_tls: bool
+  log_level: list(debug|info|warning)

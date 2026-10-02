@@ -1,0 +1,4 @@
+<nav search_view="search">
+  <view name="prusa_watch_overview" default="true" />
+  <view name="search" />
+</nav>

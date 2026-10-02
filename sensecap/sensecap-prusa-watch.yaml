@@ -1,0 +1,420 @@
+# SenseCAP Indicator D1 - Prusa Watch status page (ESPHome + LVGL)
+# Shows sensor.prusa_watch from the Prusa Watch Home Assistant add-on: a coloured status
+# banner, progress bar, nozzle / bed / Z tiles and what the AI currently sees.
+# On a print failure or printer "attention" it lights the screen, also during night dimming.
+#
+# Usage: ESPHome Device Builder -> New device -> paste this file and keep the API encryption
+# key the wizard generates (secrets.yaml: indicator_api_key). Wi-Fi is set via the captive
+# portal on first boot. Read-only: no Home Assistant actions are needed.
+# Already running an Indicator config? Copy the Prusa Watch sensors / text_sensors and the
+# page into your own tileview.
+# Tested with ESPHome 2026.9 on a SenseCAP Indicator D1.
+
+substitutions:
+  name: sensecap-indicator
+  friendly_name: SenseCAP Indicator
+  pw: sensor.prusa_watch
+  # --- night dimming (24h clock, local time from Home Assistant)
+  night_start: "23"
+  night_end: "7"
+  night_brightness: "0.12"     # 12 % backlight at night
+  wake_seconds: "30"           # a touch / button press lights the screen fully for this long
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESPTOOLPY_FLASHSIZE_8MB: y
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y
+      CONFIG_ESP32S3_DATA_CACHE_64KB: y
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: UART0
+
+api:
+  encryption:
+    key: !secret indicator_api_key        # <- replace with the key the wizard generated
+
+ota:
+  - platform: esphome        # keep whatever `ota:` block the wizard generated, if different
+
+wifi:
+  # No network hard-coded: on first boot join the "SenseCAP-Indicator Setup" hotspot
+  # from your phone and pick your Wi-Fi in the captive portal (saved on the device).
+  ap:
+    ssid: "SenseCAP-Indicator Setup"
+
+captive_portal:
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# ---------------------------------------------------------------- hardware (D1)
+
+output:
+  - platform: ledc
+    pin:
+      number: GPIO45
+      ignore_strapping_warning: true
+    id: ledc_gpio45
+    frequency: 100Hz
+
+light:
+  - platform: monochromatic
+    name: "Backlight"
+    id: backlight
+    output: ledc_gpio45
+    restore_mode: ALWAYS_ON
+
+binary_sensor:
+  - platform: status          # on = connected to Home Assistant
+    id: api_connected
+    name: "Status"
+  - platform: gpio
+    name: "User Button"
+    pin:
+      number: GPIO38
+      inverted: true
+    on_press:   # top button wakes the screen
+      - lambda: |-
+          id(last_touch) = millis();
+          id(update_backlight).execute();
+
+i2c:
+  - id: bus_a
+    sda: GPIO39
+    scl: GPIO40
+    scan: false
+
+spi:
+  - id: lcd_spi
+    clk_pin: GPIO41
+    mosi_pin: GPIO48
+    miso_pin: GPIO47
+
+pca9554:
+  - id: pca9554a_device
+    address: 0x20
+    pin_count: 16
+
+display:
+  - platform: mipi_rgb
+    model: SEEED-INDICATOR-D1
+    id: sensecap_display
+
+touchscreen:
+  platform: ft5x06
+  id: sensecap_touchscreen
+  transform:
+    mirror_x: true
+    mirror_y: true
+  on_touch:
+    - lambda: 'id(last_touch) = millis();'
+    - script.execute: update_backlight
+
+# ---------------------------------------------------------------- clock / status / night dimming
+
+globals:
+  - id: last_touch
+    type: uint32_t
+    initial_value: '0'
+  - id: bl_level
+    type: float
+    initial_value: '-1'
+
+script:
+  - id: update_backlight
+    mode: queued
+    then:
+      - lambda: |-
+          auto now = id(ha_time).now();
+          bool night = false;
+          if (now.is_valid()) {
+            int h = now.hour, a = ${night_start}, b = ${night_end};
+            night = (a > b) ? (h >= a || h < b) : (h >= a && h < b);
+          }
+          bool awake = (millis() - id(last_touch)) < ${wake_seconds} * 1000UL;
+          float target = (night && !awake) ? ${night_brightness} : 1.0f;
+          if (fabsf(target - id(bl_level)) > 0.001f) {
+            id(bl_level) = target;
+            auto call = id(backlight).turn_on();
+            call.set_brightness(target);
+            call.set_transition_length(target < 1.0f ? 3000 : 250);
+            call.perform();
+          }
+
+interval:
+  - interval: 5s
+    then:
+      - lambda: |-
+          auto now = id(ha_time).now();
+          if (now.is_valid()) {
+            std::string t = now.strftime("%H:%M");
+            lv_label_set_text(id(lbl_clock_pw), t.c_str());
+          }
+          std::string st = !id(api_connected).state ? std::string("Home Assistant disconnected")
+                         : now.is_valid() ? now.strftime("%a %d %b") : std::string("");
+          lv_label_set_text(id(lbl_status_pw), st.c_str());
+      - script.execute: update_backlight
+
+# ---------------------------------------------------------------- Prusa Watch from Home Assistant
+
+sensor:
+  # ===== Prusa Watch (attributes of sensor.prusa_watch) =====
+  - platform: homeassistant
+    id: pw_progress
+    entity_id: ${pw}
+    attribute: progress
+    on_value:
+      - lambda: |-
+          if (isnan(x)) { lv_label_set_text(id(v_pw_prog), "--"); lv_bar_set_value(id(bar_pw), 0, LV_ANIM_OFF); return; }
+          lv_label_set_text_fmt(id(v_pw_prog), "Progress %.0f%%", x);
+          lv_bar_set_value(id(bar_pw), (int) x, LV_ANIM_ON);
+
+  - platform: homeassistant
+    id: pw_remaining
+    entity_id: ${pw}
+    attribute: time_remaining
+    on_value:
+      - lambda: |-
+          if (isnan(x) || x <= 0) { lv_label_set_text(id(v_pw_left), ""); return; }
+          int m = (int) (x / 60);
+          if (m >= 60) lv_label_set_text_fmt(id(v_pw_left), "%dh %02dm left", m / 60, m % 60);
+          else lv_label_set_text_fmt(id(v_pw_left), "%d min left", m);
+
+  - platform: homeassistant
+    id: pw_noz
+    entity_id: ${pw}
+    attribute: temp_nozzle
+    on_value:
+      - lambda: |-
+          if (isnan(x)) { lv_label_set_text(id(v_pw_noz), "--"); return; }
+          lv_label_set_text_fmt(id(v_pw_noz), "%.0f", x);
+          float t = id(pw_noz_t).state;
+          uint32_t c = (isnan(t) || t < 1) ? 0x37474F : fabsf(x - t) < 5 ? 0x2E7D32 : 0xB26A00;
+          lv_obj_set_style_bg_color(id(t_pw_noz), lv_color_hex(c), LV_PART_MAIN);
+
+  - platform: homeassistant
+    id: pw_noz_t
+    entity_id: ${pw}
+    attribute: target_nozzle
+    on_value:
+      - lambda: |-
+          if (isnan(x) || x < 1) lv_label_set_text(id(s_pw_noz), "°C  off");
+          else lv_label_set_text_fmt(id(s_pw_noz), "/ %.0f °C", x);
+
+  - platform: homeassistant
+    id: pw_bed
+    entity_id: ${pw}
+    attribute: temp_bed
+    on_value:
+      - lambda: |-
+          if (isnan(x)) { lv_label_set_text(id(v_pw_bed), "--"); return; }
+          lv_label_set_text_fmt(id(v_pw_bed), "%.0f", x);
+          float t = id(pw_bed_t).state;
+          uint32_t c = (isnan(t) || t < 1) ? 0x37474F : fabsf(x - t) < 3 ? 0x2E7D32 : 0xB26A00;
+          lv_obj_set_style_bg_color(id(t_pw_bed), lv_color_hex(c), LV_PART_MAIN);
+
+  - platform: homeassistant
+    id: pw_bed_t
+    entity_id: ${pw}
+    attribute: target_bed
+    on_value:
+      - lambda: |-
+          if (isnan(x) || x < 1) lv_label_set_text(id(s_pw_bed), "°C  off");
+          else lv_label_set_text_fmt(id(s_pw_bed), "/ %.0f °C", x);
+
+  - platform: homeassistant
+    id: pw_z
+    entity_id: ${pw}
+    attribute: axis_z
+    on_value:
+      - lambda: |-
+          if (isnan(x)) lv_label_set_text(id(v_pw_z), "--");
+          else lv_label_set_text_fmt(id(v_pw_z), "%.1f", x);
+
+  - platform: homeassistant
+    id: pw_conf
+    entity_id: ${pw}
+    attribute: confidence
+
+text_sensor:
+  - platform: homeassistant
+    id: pw_state
+    entity_id: ${pw}
+    on_value:
+      - lambda: |-
+          // Verdicts (ok/warning/failure/camera_problem) while printing, otherwise the printer state.
+          std::string s = x;
+          const char *txt = "WATCH OFFLINE"; uint32_t c = 0x455A64; bool alert = false;
+          if (s == "ok")                     { txt = "PRINTING - OK";      c = 0x2E7D32; }
+          else if (s == "warning")           { txt = "WARNING";            c = 0xB26A00; }
+          else if (s == "failure")           { txt = "PRINT FAILURE";      c = 0xC62828; alert = true; }
+          else if (s == "camera_problem" || s == "camera_error") { txt = "CAMERA PROBLEM"; c = 0x546E7A; }
+          else if (s == "analysis_error")    { txt = "AI CHECK ERROR";     c = 0xB26A00; }
+          else if (s == "attention" || s == "error") { txt = "NEEDS ATTENTION"; c = 0xC62828; alert = true; }
+          else if (s == "paused")            { txt = "PAUSED";             c = 0xB26A00; }
+          else if (s == "printing" || s == "busy") { txt = "PRINTING";     c = 0x1565C0; }
+          else if (s == "finished")          { txt = "FINISHED";           c = 0x1565C0; }
+          else if (s == "idle" || s == "ready" || s == "stopped") { txt = "IDLE"; c = 0x37474F; }
+          else if (s == "offline")           { txt = "PRINTER OFFLINE";    c = 0x37474F; }
+          lv_label_set_text(id(v_pw_status), txt);
+          lv_obj_set_style_bg_color(id(t_pw_banner), lv_color_hex(c), LV_PART_MAIN);
+          bool verdict = s == "ok" || s == "warning" || s == "failure" || s == "camera_problem";
+          if (!verdict) {   // no AI check outside printing: don't leave the last verdict on screen
+            lv_label_set_text(id(v_pw_desc), "");
+            lv_label_set_text(id(s_pw_status), "");
+          }
+          // On a new alert: jump to this page and light the screen (also at night).
+          static std::string prev;
+          if (alert && s != prev) {
+            lv_obj_set_tile(id(tv), id(page_prusa), LV_ANIM_ON);
+            id(last_touch) = millis();
+            id(update_backlight).execute();
+          }
+          prev = s;
+
+  - platform: homeassistant
+    id: pw_issue
+    entity_id: ${pw}
+    attribute: issue
+    on_value:
+      - lambda: |-
+          std::string s = x;
+          float conf = id(pw_conf).state;
+          std::replace(s.begin(), s.end(), '_', ' ');
+          if (s.empty() || s == "none") {
+            if (isnan(conf)) lv_label_set_text(id(s_pw_status), "");
+            else lv_label_set_text_fmt(id(s_pw_status), "AI confidence %.0f%%", conf * 100);
+          } else if (isnan(conf)) lv_label_set_text(id(s_pw_status), s.c_str());
+          else lv_label_set_text_fmt(id(s_pw_status), "%s  (%.0f%%)", s.c_str(), conf * 100);
+
+  - platform: homeassistant
+    id: pw_desc
+    entity_id: ${pw}
+    attribute: description
+    on_value:
+      - lambda: 'lv_label_set_text(id(v_pw_desc), x.c_str());'
+
+lvgl:
+  displays: sensecap_display
+  touchscreens: sensecap_touchscreen
+  bg_color: 0x101418
+  text_color: 0xFFFFFF
+  style_definitions:
+    - id: tile
+      width: 152
+      height: 196
+      radius: 14
+      border_width: 0
+      pad_all: 8
+      bg_color: 0x37474F
+      bg_opa: COVER
+  pages:
+    - id: main_page
+      bg_color: 0x101418
+      widgets:
+        - tileview:
+            id: tv
+            width: 480
+            height: 480
+            bg_color: 0x101418
+            scrollbar_mode: "OFF"
+            tiles:
+              # ===================== PAGE 3: PRUSA 3D PRINTER =====================
+              - id: page_prusa
+                row: 0
+                column: 0
+                dir: HOR
+                widgets:
+                  - label: { x: 12, y: 14, text: "3D printer  (Prusa)", text_font: montserrat_20, text_color: 0xFFFFFF }
+                  - label: { id: lbl_clock_pw, align: TOP_RIGHT, x: -12, y: 6, text: "", text_font: montserrat_36, text_color: 0xFFFFFF }
+                  # status banner: colour + text follow sensor.prusa_watch
+                  - obj:
+                      id: t_pw_banner
+                      x: 6
+                      y: 56
+                      width: 468
+                      height: 92
+                      radius: 14
+                      border_width: 0
+                      pad_all: 10
+                      bg_color: 0x455A64
+                      bg_opa: COVER
+                      scrollable: false
+                      widgets:
+                        - label: { id: v_pw_status, align: TOP_LEFT, text: "WATCH OFFLINE", text_font: montserrat_36 }
+                        - label: { id: s_pw_status, align: BOTTOM_LEFT, text: "", text_font: montserrat_18 }
+                  # progress
+                  - label: { id: v_pw_prog, x: 12, y: 160, text: "Progress --", text_font: montserrat_18 }
+                  - label: { id: v_pw_left, align: TOP_RIGHT, x: -12, y: 160, text: "", text_font: montserrat_18, text_color: 0xCFD8DC }
+                  - bar:
+                      id: bar_pw
+                      x: 12
+                      y: 188
+                      width: 456
+                      height: 16
+                      min_value: 0
+                      max_value: 100
+                      value: 0
+                      bg_color: 0x37474F
+                      indicator:
+                        bg_color: 0x42A5F5
+                  # nozzle / bed / Z tiles
+                  - obj:
+                      id: t_pw_noz
+                      styles: tile
+                      x: 6
+                      y: 216
+                      height: 112
+                      scrollable: false
+                      widgets:
+                        - label: { align: TOP_MID, text: "Nozzle", text_font: montserrat_18 }
+                        - label: { id: v_pw_noz, align: CENTER, y: 4, text: "--", text_font: montserrat_36 }
+                        - label: { id: s_pw_noz, align: BOTTOM_MID, text: "°C", text_font: montserrat_14 }
+                  - obj:
+                      id: t_pw_bed
+                      styles: tile
+                      x: 164
+                      y: 216
+                      height: 112
+                      scrollable: false
+                      widgets:
+                        - label: { align: TOP_MID, text: "Bed", text_font: montserrat_18 }
+                        - label: { id: v_pw_bed, align: CENTER, y: 4, text: "--", text_font: montserrat_36 }
+                        - label: { id: s_pw_bed, align: BOTTOM_MID, text: "°C", text_font: montserrat_14 }
+                  - obj:
+                      styles: tile
+                      x: 322
+                      y: 216
+                      height: 112
+                      scrollable: false
+                      widgets:
+                        - label: { align: TOP_MID, text: "Height", text_font: montserrat_18 }
+                        - label: { id: v_pw_z, align: CENTER, y: 4, text: "--", text_font: montserrat_36 }
+                        - label: { align: BOTTOM_MID, text: "mm", text_font: montserrat_14 }
+                  # what the AI sees
+                  - label:
+                      id: v_pw_desc
+                      x: 12
+                      y: 338
+                      width: 456
+                      long_mode: WRAP
+                      text: ""
+                      text_font: montserrat_16
+                      text_color: 0xCFD8DC
+                  - label: { id: lbl_status_pw, align: BOTTOM_LEFT, x: 12, y: -4, text: "", text_font: montserrat_14, text_color: 0xCFD8DC }
+                  - label: { align: BOTTOM_RIGHT, x: -12, y: -4, text: "Prusa Watch", text_font: montserrat_14, text_color: 0x90A4AE }

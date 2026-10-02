@@ -1,0 +1,30 @@
+# Home Assistant automation: switch the printer's smart plug off after a print,
+# but only once the hotend has cooled (its fan must keep running until then - heat creep / clogs).
+# Paste in Settings -> Automations -> Create -> ⋮ Edit in YAML. Replace switch.printer_plug.
+alias: Prusa - power off after print (cooled down)
+description: Turns the printer plug off 10 min after the print finished and the nozzle is below 50 °C.
+mode: single
+triggers:
+  - trigger: template
+    value_template: >
+      {{ state_attr('sensor.prusa_watch', 'printer_state') in ['FINISHED', 'STOPPED']
+         and (state_attr('sensor.prusa_watch', 'temp_nozzle') | float(999)) < 50 }}
+    for: "00:10:00"
+conditions:
+  - condition: state
+    entity_id: switch.printer_plug
+    state: "on"
+  # belt and braces: never while a job is active
+  - condition: template
+    value_template: >
+      {{ state_attr('sensor.prusa_watch', 'printer_state') not in ['PRINTING', 'PAUSED', 'ATTENTION', 'BUSY'] }}
+actions:
+  - action: switch.turn_off
+    target:
+      entity_id: switch.printer_plug
+  - action: persistent_notification.create
+    data:
+      title: Printer switched off
+      message: >
+        Print finished, nozzle {{ state_attr('sensor.prusa_watch', 'temp_nozzle') }} °C.
+        Energy used: {{ state_attr('sensor.prusa_watch', 'print_energy_kwh') | default('n/a') }} kWh.

@@ -27,6 +27,7 @@ minute, sends it with PrusaLink telemetry to Claude Haiku 4.5 on Amazon Bedrock,
 | `alert_cooldown_min` | minimum minutes between repeated failure emails (30) |
 | `notify_finished` | email when a print finishes (on) |
 | `auto_action`, `auto_action_threshold` | `none` / `pause` / `stop` after N consecutive failures (off by default) |
+| `power_entity`, `energy_price`, `currency` | optional smart plug power sensor (W) → energy and cost per print |
 | `heartbeat_min`, `cloudwatch_heartbeat`, `blind_alert_min` | proof-of-life and "watchdog blind" alert |
 | `hec_url`, `hec_token`, `hec_index`, `hec_verify_tls` | optional Splunk HEC output |
 

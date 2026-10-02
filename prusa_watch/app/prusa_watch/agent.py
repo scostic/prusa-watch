@@ -10,7 +10,7 @@ from typing import Optional
 from . import camera
 from .config import Config
 from . import __version__
-from .notify import CloudWatchHeartbeat, HASensor, HECSender, Mailer
+from .notify import CloudWatchHeartbeat, EnergyMeter, HASensor, HECSender, Mailer
 from .prusalink import PrinterStatus, PrusaLink
 from .vision import Verdict, VisionJudge
 from .watchdog import Watchdog
@@ -50,6 +50,8 @@ class Agent:
         self.last_good_check: Optional[float] = None
         self.blind_alerted = False
         self.printer_offline = False
+        self.energy = EnergyMeter()
+        self.power_w: Optional[float] = None
         self.watchdog = Watchdog(cfg.failure_threshold, cfg.min_confidence,
                                  cfg.alert_cooldown_min * 60, cfg.auto_action, cfg.auto_action_threshold)
         self.history: deque[Frame] = deque()
@@ -177,13 +179,39 @@ class Agent:
                        downgraded=f"not confirmed by a second frame "
                                   f"({second.status}: {second.description[:120]})"), info
 
-    @staticmethod
-    def _ha_attrs(st: PrinterStatus) -> dict:
+    # ---------- smart plug energy ----------
+    ACTIVE_STATES = {"PRINTING", "PAUSED", "ATTENTION", "BUSY"}
+
+    def _read_power(self, st: PrinterStatus, now: float) -> None:
+        if not self.cfg.power_entity:
+            return
+        self.power_w = self.ha.read_number(self.cfg.power_entity)
+        if st.job_id is not None and st.state in self.ACTIVE_STATES:
+            self.energy.add(now, self.power_w)
+
+    def _energy_fields(self) -> dict:
+        if not self.energy.samples:
+            return {}
+        fields = {"print_energy_kwh": round(self.energy.kwh, 3)}
+        if self.cfg.energy_price:
+            fields["print_energy_cost"] = round(self.energy.kwh * self.cfg.energy_price, 3)
+        return fields
+
+    def _energy_line(self) -> str:
+        f = self._energy_fields()
+        if not f:
+            return ""
+        line = f"Energy     : {f['print_energy_kwh']:.2f} kWh"
+        if "print_energy_cost" in f:
+            line += f" ({self.cfg.currency}{f['print_energy_cost']:.2f} at {self.cfg.currency}{self.cfg.energy_price}/kWh)"
+        return line
+
+    def _ha_attrs(self, st: PrinterStatus) -> dict:
         """Printer telemetry for the HA sensor (used by dashboards and the SenseCAP Indicator page)."""
         return {"printer_state": st.state, "job_id": st.job_id, "progress": st.progress,
                 "time_remaining": st.time_remaining, "temp_nozzle": st.temp_nozzle,
                 "target_nozzle": st.target_nozzle, "temp_bed": st.temp_bed, "target_bed": st.target_bed,
-                "axis_z": st.axis_z}
+                "axis_z": st.axis_z, "power_w": self.power_w, **self._energy_fields()}
 
     def _status_body(self, st: PrinterStatus, verdict: Optional[Verdict] = None, extra: str = "") -> str:
         lines = []
@@ -223,7 +251,9 @@ class Agent:
             self.watchdog.new_job(st.job_id)
             self.history.clear()
             self.last_verdict = None
+            self.energy.reset()
 
+        self._read_power(st, now)
         changed = st.state != self.prev_state
         if changed:
             log.info("Printer state: %s -> %s", self.prev_state, st.state)
@@ -234,8 +264,12 @@ class Agent:
             self._email(f"[Prusa Watch] Printer needs attention: {st.state}",
                         self._status_body(st, extra="The printer itself reported a problem "
                                                     "(e.g. filament runout, thermal or fan error)."), jpeg)
-        elif changed and st.state == "FINISHED" and self.prev_state == "PRINTING" and self.cfg.notify_finished:
-            self._email("[Prusa Watch] Print finished", self._status_body(st), self._grab())
+        elif changed and st.state == "FINISHED" and self.prev_state == "PRINTING":
+            if self.energy.samples:
+                self._event("energy", st, **self._energy_fields())
+            if self.cfg.notify_finished:
+                self._email("[Prusa Watch] Print finished",
+                            self._status_body(st, extra=self._energy_line()), self._grab())
 
         self.prev_state = st.state
         if st.state != "PRINTING":
@@ -261,6 +295,8 @@ class Agent:
 
         ref = self._reference(now)
         context = [st.summary()]
+        if self.power_w is not None:
+            context.append(f"Printer plug power: {self.power_w:.0f} W")
         metrics: dict = {}
         if ref:
             mins = (now - ref.t) / 60

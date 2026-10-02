@@ -44,6 +44,9 @@ flowchart LR
 - **Watching the watchdog:** a CloudWatch heartbeat alarm emails you if the add-on, the Pi or your internet
   goes silent; the add-on itself emails you if a print runs with no successful AI check for 10 minutes.
 - **Optional automatic pause/stop** via PrusaLink (off by default).
+- **Energy and cost per print** from any smart plug with a power sensor (`power_entity`), plus an example
+  automation that switches the plug off after the print once the hotend has cooled
+  ([`ha/`](ha/prusa-power-off-after-print.yaml)).
 - **Home Assistant entity** `sensor.prusa_watch` with verdict + telemetry attributes, latest frame in
   `/share/prusa_watch/latest.jpg`.
 - **SenseCAP Indicator page** ([`sensecap/`](sensecap)) and an optional **Splunk app** ([`splunk_app/`](splunk_app))

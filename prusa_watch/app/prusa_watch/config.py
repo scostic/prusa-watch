@@ -31,6 +31,9 @@ class Config:
     auto_action: str = "none"
     auto_action_threshold: int = 5
     ha_sensor: bool = True
+    power_entity: str = ""            # HA sensor with the printer plug's power in W
+    energy_price: float = 0.0         # price per kWh, for the cost per print
+    currency: str = "€"
     heartbeat_min: int = 5
     cloudwatch_heartbeat: bool = True
     blind_alert_min: int = 10
@@ -49,7 +52,7 @@ class Config:
         # Pasted secrets often carry stray spaces/newlines.
         for name in ("printer_host", "camera_url", "prusalink_api_key", "prusalink_password",
                      "aws_region", "aws_access_key_id", "aws_secret_access_key",
-                     "bedrock_model_id", "email_from", "email_to", "hec_url", "hec_token", "hec_index"):
+                     "bedrock_model_id", "email_from", "email_to", "hec_url", "hec_token", "hec_index", "power_entity"):
             setattr(self, name, str(getattr(self, name) or "").strip())
         problems = []
         if not self.printer_host or "X" in self.printer_host:

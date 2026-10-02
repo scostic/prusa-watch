@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+- Smart-plug energy per print: set `power_entity` to the plug's power sensor (W) and `energy_price`
+  (per kWh). The add-on integrates power over the job and reports kWh and cost in the "Print finished"
+  email, `sensor.prusa_watch` (`power_w`, `print_energy_kwh`, `print_energy_cost`) and Splunk (`type=energy`).
+- Plug power is included in the telemetry the model sees.
+- Example automation `ha/prusa-power-off-after-print.yaml`: plug off after the print once the nozzle is < 50 °C.
+
 ## 0.4.1
 - "Printer unreachable" is reported once per outage instead of every minute (a switched-off printer is normal).
 

@@ -124,6 +124,38 @@ class AgentTickTest(unittest.TestCase):
         self.assertEqual(states[0]["previous_state"], "OFFLINE")          # recovery reported once
         self.assertFalse(a.printer_offline)
 
+    def test_energy_per_print(self, _grab, _thumb):
+        a = make_agent(power_entity="sensor.printer_plug_current_consumption", energy_price=0.17114)
+        a.ha = mock.Mock()
+        a.ha.read_number.return_value = 200.0                     # constant 200 W
+        a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=7)
+        with mock.patch.object(agent_mod.time, "time") as clock:
+            for minute in range(61):                                # one hour of printing
+                clock.return_value = 1000.0 + minute * 60
+                a.tick()
+            self.assertAlmostEqual(a.energy.kwh, 0.2, places=3)
+            self.assertEqual(a.ha.publish.call_args.kwargs["power_w"], 200.0)
+            ctx = a.judge.assess.call_args.args[2]
+            self.assertIn("Printer plug power: 200 W", ctx)
+            a.printer.status.return_value = PrinterStatus("FINISHED", job_id=7)
+            clock.return_value += 60
+            a.tick()
+        body = a.mailer.send.call_args.args[1]
+        self.assertIn("0.20 kWh", body)
+        self.assertIn("€0.03", body)
+        energy = [c.args[0] for c in a.hec.send.call_args_list if c.args[0]["type"] == "energy"]
+        self.assertEqual(energy[0]["print_energy_cost"], 0.034)
+
+    def test_no_power_entity_no_energy(self, _grab, _thumb):
+        a = make_agent()
+        a.ha = mock.Mock()
+        a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=7)
+        a.tick()
+        a.ha.read_number.assert_not_called()
+        self.assertNotIn("print_energy_kwh", a.ha.publish.call_args.kwargs)
+
     def test_heartbeat_throttled(self, _grab, _thumb):
         a = make_agent(heartbeat_min=5)
         a.prev_state = "PRINTING"

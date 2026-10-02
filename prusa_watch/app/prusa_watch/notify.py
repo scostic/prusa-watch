@@ -133,3 +133,45 @@ class HASensor:
             ).raise_for_status()
         except requests.RequestException as e:
             log.warning("Could not update Home Assistant sensor: %s", e)
+
+    def read_number(self, entity_id: str) -> Optional[float]:
+        """Numeric state of another HA entity (e.g. a smart plug's power sensor), None if unavailable."""
+        if not (self.token and entity_id):
+            return None
+        try:
+            r = requests.get(f"http://supervisor/core/api/states/{entity_id}", timeout=5,
+                             headers={"Authorization": f"Bearer {self.token}"})
+            r.raise_for_status()
+            return float(r.json()["state"])
+        except (requests.RequestException, KeyError, TypeError, ValueError):
+            return None      # unknown / unavailable / not numeric
+
+
+class EnergyMeter:
+    """Integrates a power reading (W) into energy (Wh) for the current print job."""
+
+    MAX_GAP_S = 600     # ignore gaps longer than this (add-on restart, plug offline)
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self) -> None:
+        self.wh = 0.0
+        self.last: Optional[tuple[float, float]] = None   # (time, watts)
+        self.samples = 0
+
+    def add(self, t: float, watts: Optional[float]) -> None:
+        if watts is None or watts < 0:
+            self.last = None
+            return
+        if self.last is not None:
+            t0, w0 = self.last
+            dt = t - t0
+            if 0 < dt <= self.MAX_GAP_S:
+                self.wh += (w0 + watts) / 2 * dt / 3600
+        self.last = (t, watts)
+        self.samples += 1
+
+    @property
+    def kwh(self) -> float:
+        return self.wh / 1000

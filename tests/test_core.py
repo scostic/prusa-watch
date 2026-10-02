@@ -127,6 +127,22 @@ class HECTest(unittest.TestCase):
         self.assertEqual(h.backlog, [])
 
 
+class EnergyMeterTest(unittest.TestCase):
+    def test_trapezoid_and_gaps(self):
+        from prusa_watch.notify import EnergyMeter
+        m = EnergyMeter()
+        for i in range(61):                 # 1 h in 60 s steps, ramp 100 -> 300 W: avg 200 W -> 200 Wh
+            m.add(i * 60, 100.0 + i * 200 / 60)
+        self.assertAlmostEqual(m.wh, 200.0)
+        m.add(3600 + 3600, 300.0)           # 1 h gap > MAX_GAP_S: ignored
+        self.assertAlmostEqual(m.wh, 200.0)
+        m.add(7260, None)                   # unavailable breaks the chain
+        m.add(7320, 300.0)
+        self.assertAlmostEqual(m.wh, 200.0)
+        m.reset()
+        self.assertEqual((m.wh, m.samples), (0.0, 0))
+
+
 class ConfigTest(unittest.TestCase):
     def _write(self, data):
         f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)

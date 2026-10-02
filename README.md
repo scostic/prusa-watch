@@ -8,6 +8,11 @@ No extra hardware, no GPU: about **$0.18 per print-hour**.
 Built and tested on an Original Prusa **MK3.5S** with the **Buddy3D camera**, Home Assistant OS on a
 Raspberry Pi 4, and a **SenseCAP Indicator D1** as a desk status display.
 
+<p align="center">
+  <img src="docs/sensecap-indicator.jpg" alt="SenseCAP Indicator showing Prusa Watch: PRINTING - OK, AI confidence 95%, nozzle 250 °C, bed 90 °C, and the model's description of the frame" width="480">
+  <br><sub>The SenseCAP Indicator status page during a PETG print - the text at the bottom is Claude's own description of the latest camera frame.</sub>
+</p>
+
 ```mermaid
 flowchart LR
     cam[Buddy3D camera<br/>RTSP] -->|frame / min| addon

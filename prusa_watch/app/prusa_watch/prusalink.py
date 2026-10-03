@@ -74,6 +74,26 @@ class PrusaLink:
     def status(self) -> PrinterStatus:
         return parse_status(self._req("GET", "/api/v1/status").json())
 
+    def job(self) -> Optional[dict]:
+        """Current job incl. file metadata (`file.refs.thumbnail`), None when no job (HTTP 204)."""
+        r = self._req("GET", "/api/v1/job")
+        return r.json() if r.status_code == 200 and r.content else None
+
+    def fetch(self, path: str) -> bytes:
+        """Download a printer-relative resource such as a thumbnail ref."""
+        if path.startswith("http"):
+            r = self.session.get(path, timeout=self.timeout)
+            r.raise_for_status()
+            return r.content
+        return self._req("GET", path if path.startswith("/") else "/" + path).content
+
+
+def thumbnail_ref(job: Optional[dict]) -> tuple[Optional[str], str]:
+    """(thumbnail path, display name) from a /api/v1/job response; prefers the large thumbnail."""
+    f = (job or {}).get("file") or {}
+    refs = f.get("refs") or {}
+    return refs.get("thumbnail") or refs.get("icon"), f.get("display_name") or f.get("name") or ""
+
     def pause(self, job_id: int) -> None:
         self._req("PUT", f"/api/v1/job/{job_id}/pause")
 

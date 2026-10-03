@@ -12,7 +12,7 @@ from .config import Config
 from . import __version__
 from .dataset import Dataset
 from .notify import CloudWatchHeartbeat, EnergyMeter, HASensor, HECSender, Mailer
-from .prusalink import PrinterStatus, PrusaLink
+from .prusalink import PrinterStatus, PrusaLink, thumbnail_ref
 from .vision import Verdict, VisionJudge
 from .watchdog import Watchdog
 
@@ -58,6 +58,9 @@ class Agent:
         if cfg.dataset_enabled and cfg.snapshot_dir:
             self.dataset = Dataset(os.path.join(cfg.snapshot_dir, "dataset"),
                                    ok_every=cfg.dataset_ok_every, max_samples=cfg.dataset_max)
+        self.expected_job = None
+        self.expected_jpeg: Optional[bytes] = None
+        self.expected_name = ""
         self.last_check: Optional[dict] = None          # args to (force-)save the latest check as a sample
         self.button_seen: dict[str, Optional[str]] = {}
         self.watchdog = Watchdog(cfg.failure_threshold, cfg.min_confidence,
@@ -178,7 +181,8 @@ class Agent:
         second = self.judge.assess(
             jpeg, ref.jpeg if ref else None,
             "\n".join(context + ["This is a confirmation frame taken a few seconds after a suspected "
-                                 f"{first.issue}. Judge it independently."]))
+                                 f"{first.issue}. Judge it independently."]),
+            self.expected_jpeg)
         info = {"confirm_status": second.status, "confirm_issue": second.issue,
                 "confirm_confidence": round(second.confidence, 2)}
         if second.is_failure:
@@ -186,6 +190,25 @@ class Agent:
         return replace(first, status="warning", confidence=min(first.confidence, 0.5),
                        downgraded=f"not confirmed by a second frame "
                                   f"({second.status}: {second.description[:120]})"), info
+
+    # ---------- expected object (G-code thumbnail) ----------
+    def _expected_image(self, st: PrinterStatus) -> Optional[bytes]:
+        """Slicer preview of the current job, fetched once per job (failures are cached too)."""
+        if not self.cfg.use_gcode_thumbnail or st.job_id is None:
+            return None
+        if self.expected_job == st.job_id:
+            return self.expected_jpeg
+        self.expected_job, self.expected_jpeg, self.expected_name = st.job_id, None, ""
+        try:
+            path, self.expected_name = thumbnail_ref(self.printer.job())
+            if path:
+                self.expected_jpeg = camera.to_jpeg(self.printer.fetch(path))
+                log.info("Using G-code thumbnail of %r (%d bytes)", self.expected_name, len(self.expected_jpeg))
+            else:
+                log.info("Job %s has no G-code thumbnail", st.job_id)
+        except Exception as e:                                  # never let this block a check
+            log.warning("Could not get the G-code thumbnail: %s", e)
+        return self.expected_jpeg
 
     # ---------- labelled dataset ----------
     def _save_sample(self, force: bool = False) -> Optional[str]:
@@ -356,7 +379,10 @@ class Agent:
             thumb = b""
 
         ref = self._reference(now)
+        expected = self._expected_image(st)
         context = [st.summary()]
+        if self.expected_name:
+            context.append(f"Print file: {self.expected_name}")
         if self.power_w is not None:
             context.append(f"Printer plug power: {self.power_w:.0f} W")
         metrics: dict = {}
@@ -375,7 +401,7 @@ class Agent:
             context.append("No reference frame yet (first check of this print).")
 
         try:
-            verdict = self.judge.assess(jpeg, ref.jpeg if ref else None, "\n".join(context))
+            verdict = self.judge.assess(jpeg, ref.jpeg if ref else None, "\n".join(context), expected)
         except Exception as e:
             log.warning("Bedrock call failed: %s", e)
             self._event("error", st, component="bedrock", error=str(e))
@@ -399,7 +425,7 @@ class Agent:
                  f" [downgraded: {verdict.downgraded}]" if verdict.downgraded else "")
         self._save(jpeg, flagged=verdict.status in ("warning", "failure"))
         self.last_check = {"t": now, "job_id": st.job_id, "current": jpeg,
-                           "reference": ref.jpeg if ref else None, "context": "\n".join(context),
+                           "reference": ref.jpeg if ref else None, "context": "\n".join(context), "expected": expected,
                            "verdict": verdict.as_dict()}
         sample_id = self._save_sample()
 
@@ -425,6 +451,7 @@ class Agent:
 
         self._event("check", st, verdict, streak=self.watchdog.streak, alert=decision.alert,
                     action=decision.action, action_result=action_note or None, sample=sample_id,
+                    has_expected=expected is not None,
                     **metrics, **usage)
         self.ha.publish(
             verdict.status, issue=verdict.issue, confidence=round(verdict.confidence, 2),

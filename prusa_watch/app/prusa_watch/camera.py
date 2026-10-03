@@ -36,6 +36,22 @@ def grab_jpeg(url: str, width: int = 960, rotate: int = 0, timeout: float = 30) 
     )
 
 
+# Slicer thumbnails have a transparent background whose hidden RGB can be anything: blend onto neutral grey.
+_FLATTEN = ":".join(
+    f"{c}='({c}(X,Y)*alpha(X,Y)+{BG}*(255-alpha(X,Y)))/255'" for c, BG in (("r", 96), ("g", 96), ("b", 96))
+) + ":a=255"
+
+
+def to_jpeg(image: bytes, width: int = 480) -> bytes:
+    """Any image ffmpeg understands (PNG, QOI from Buddy .bgcode, JPEG...) -> JPEG for the model."""
+    return _ffmpeg(
+        ["-f", "image2pipe", "-i", "pipe:0", "-frames:v", "1",
+         "-vf", f"format=rgba,geq={_FLATTEN},format=rgb24,scale='min({width},iw)':-2",
+         "-q:v", "3", "-f", "image2", "-c:v", "mjpeg", "pipe:1"],
+        stdin=image, timeout=15,
+    )
+
+
 def thumbnail(jpeg: bytes) -> bytes:
     """Tiny grayscale raw thumbnail used for a cheap frame-difference score."""
     return _ffmpeg(

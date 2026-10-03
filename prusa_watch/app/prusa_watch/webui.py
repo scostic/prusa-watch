@@ -33,7 +33,7 @@ main{padding:16px;display:grid;gap:14px;max-width:1100px;margin:0 auto}
 .top{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}.id{color:var(--muted);font-size:12px}
 .pill{border-radius:999px;padding:2px 9px;font-weight:600;font-size:12px;color:#fff}
 .ok{background:var(--ok)}.warning{background:var(--warn)}.failure{background:var(--bad)}.camera_problem{background:#546e7a}
-.imgs{display:grid;grid-template-columns:1fr 1fr;gap:8px}.imgs figure{margin:0}.imgs img{width:100%;border-radius:8px;cursor:zoom-in;display:block}
+.imgs{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.imgs figure{margin:0}.imgs img{width:100%;border-radius:8px;cursor:zoom-in;display:block}
 figcaption{color:var(--muted);font-size:12px}.desc{margin:0}.ev{color:var(--muted);margin:0}
 .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .lab{font-weight:600}.lab.ok{color:var(--ok);background:none}.lab.failure{color:var(--bad);background:none}
@@ -69,7 +69,8 @@ function card(m){
      <span>part ${esc(v.part_visible||"?")}</span>
      <span class="id">${esc(m.time)} · job ${esc(m.job_id)} · ${esc(m.id)}</span></div>
    <div class="imgs"><figure><img loading="lazy" src="img/${m.id}/current.jpg" alt="current frame"><figcaption>current</figcaption></figure>
-     ${ref ? `<figure><img loading="lazy" src="img/${m.id}/reference.jpg" alt="reference frame"><figcaption>reference</figcaption></figure>` : ""}</div>
+     ${ref ? `<figure><img loading="lazy" src="img/${m.id}/reference.jpg" alt="reference frame"><figcaption>reference</figcaption></figure>` : ""}
+     ${m.has_expected ? `<figure><img loading="lazy" src="img/${m.id}/expected.jpg" alt="slicer preview"><figcaption>expected (slicer preview)</figcaption></figure>` : ""}</div>
    <p class="desc">${esc(v.description)}</p>
    ${v.evidence ? `<p class="ev">Evidence: ${esc(v.evidence)}</p>` : ""}
    ${v.downgraded ? `<p class="ev">Downgraded: ${esc(v.downgraded)}</p>` : ""}
@@ -131,7 +132,7 @@ def make_handler(ds: Dataset):
             if parts == ["api", "samples"]:
                 filt = parse_qs(url.query).get("filter", ["unlabelled"])[0]
                 return self._json(ds.samples(filt))
-            if len(parts) == 3 and parts[0] == "img" and parts[2] in ("current.jpg", "reference.jpg"):
+            if len(parts) == 3 and parts[0] == "img" and parts[2] in ("current.jpg", "reference.jpg", "expected.jpg"):
                 path = ds.image_path(parts[1], parts[2][:-4])
                 if path:
                     with open(path, "rb") as f:

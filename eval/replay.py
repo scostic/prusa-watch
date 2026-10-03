@@ -4,7 +4,8 @@ Labelled dataset (recommended) - samples saved by the add-on and labelled in the
     copy \\<ha>\share\prusa_watch\dataset to eval/dataset, then
     python eval/replay.py --dataset eval/dataset --variants recorded,v2
   `recorded` re-scores what the live model said at the time (free, no API calls);
-  `v2` (current prompt) and `v1` (original prompt) re-run Bedrock on the saved frames + context.
+  `v2` (current prompt, with the G-code thumbnail when the sample has one), `v2-noexp` (same without the
+  thumbnail - measures its value) and `v1` (original prompt) re-run Bedrock on the saved frames + context.
   Reports a confusion matrix, recall (failures caught), precision and false-alarm rate.
 
 Legacy mode - a folder of flagged-*.jpg frames from a print that went fine (every non-ok = false alarm):
@@ -73,12 +74,12 @@ PRICE_IN, PRICE_OUT = 1.1e-6, 5.5e-6        # Haiku 4.5 via EU profile, USD per 
 
 
 def make_judges(cfg_path: str, variants: list[str]) -> dict:
-    needed = [v for v in variants if v in ("v1", "v2")]
+    needed = [v for v in variants if v in ("v1", "v2", "v2-noexp")]
     if not needed:
         return {}
     cfg = config.load(cfg_path)
     args = (cfg.aws_region, cfg.bedrock_model_id, cfg.aws_access_key_id, cfg.aws_secret_access_key)
-    judges = {"v2": lambda: vision.VisionJudge(*args),
+    judges = {"v2": lambda: vision.VisionJudge(*args), "v2-noexp": lambda: vision.VisionJudge(*args),
               "v1": lambda: vision.VisionJudge(*args, system_prompt=V1_PROMPT, tool=V1_TOOL)}
     return {v: judges[v]() for v in needed}
 
@@ -91,7 +92,7 @@ def read(path):
 # ---------------------------------------------------------------- labelled dataset
 def run_dataset(args) -> None:
     variants = args.variants.split(",")
-    unknown = set(variants) - {"recorded", "v1", "v2"}
+    unknown = set(variants) - {"recorded", "v1", "v2", "v2-noexp"}
     if unknown:
         sys.exit(f"unknown variants: {unknown}")
     judges = make_judges(args.config, variants)
@@ -117,9 +118,12 @@ def run_dataset(args) -> None:
                 v = m["verdict"]
             else:
                 ref_path = os.path.join(folder, "reference.jpg")
+                exp_path = os.path.join(folder, "expected.jpg")
+                use_exp = variant == "v2" and os.path.isfile(exp_path)
                 verdict = judges[variant].assess(read(os.path.join(folder, "current.jpg")),
                                                  read(ref_path) if os.path.isfile(ref_path) else None,
-                                                 m.get("context", ""))
+                                                 m.get("context", ""),
+                                                 read(exp_path) if use_exp else None)
                 u = judges[variant].last_usage
                 cost += u["input_tokens"] * PRICE_IN + u["output_tokens"] * PRICE_OUT
                 v = verdict.as_dict()
@@ -184,7 +188,7 @@ def main() -> None:
     ap.add_argument("folder", nargs="?", help="legacy: folder with flagged-*.jpg from a good print")
     ap.add_argument("--dataset", help="folder of labelled samples (<id>/meta.json, current.jpg, reference.jpg)")
     ap.add_argument("--config", default="config.local.json")
-    ap.add_argument("--variants", default=None, help="dataset: recorded,v2,v1   legacy: v1,v2")
+    ap.add_argument("--variants", default=None, help="dataset: recorded,v2,v2-noexp,v1   legacy: v1,v2")
     ap.add_argument("--positive", default="failure", help="model statuses counted as an alarm, e.g. failure,warning")
     ap.add_argument("--runs", type=int, default=1, help="legacy mode only")
     args = ap.parse_args()

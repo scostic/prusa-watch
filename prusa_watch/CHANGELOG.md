@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+- The model now also sees **what the part should look like**: the slicer thumbnail embedded in the G-code,
+  fetched once per job from PrusaLink (`/api/v1/job` → `file.refs.thumbnail`), converted with ffmpeg
+  (PNG or QOI from `.bgcode`, transparent background flattened onto grey) and sent as an "EXPECTED" image
+  with the file name. About 150 extra input tokens per check. Option `use_gcode_thumbnail` (on).
+- Samples store the expected image too; the labelling panel shows it.
+- `eval/replay.py`: variant `v2-noexp` re-runs without the thumbnail, to measure its effect.
+
 ## 0.6.0
 - Labelled test set: every warning/failure check (and 1 in `dataset_ok_every` normal checks) is saved to
   `/share/prusa_watch/dataset/<id>/` with both frames, the exact context the model saw and its verdict.

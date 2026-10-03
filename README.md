@@ -37,6 +37,8 @@ flowchart LR
   `ok / warning / failure / camera_problem`, the issue (spaghetti, clog/under-extrusion, detached part,
   blob on nozzle, layer shift, warping, stringing), confidence, how much of the part is visible, and the
   visual evidence.
+- **Knows what it should be looking at:** the slicer thumbnail embedded in the G-code is sent along as an
+  "expected" image, so a lattice sphere or a thin tower isn't mistaken for a defect (or vice versa).
 - **Built to avoid false alarms:** an email only after 3 consecutive confident failures, every failure is
   re-checked on a second frame, and a guard rule refuses "detached part" unless the part is fully visible.
 - **Printer-side events:** immediate email on PrusaLink `ERROR` / `ATTENTION` (runout, thermal, fan),

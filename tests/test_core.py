@@ -127,6 +127,18 @@ class HECTest(unittest.TestCase):
         self.assertEqual(h.backlog, [])
 
 
+class ThumbnailRefTest(unittest.TestCase):
+    def test_refs(self):
+        from prusa_watch.prusalink import thumbnail_ref
+        job = {"file": {"name": "A~1.BGC", "display_name": "a.bgcode",
+                        "refs": {"icon": "/thumb/s/usb/A~1.BGC", "thumbnail": "/thumb/l/usb/A~1.BGC"}}}
+        self.assertEqual(thumbnail_ref(job), ("/thumb/l/usb/A~1.BGC", "a.bgcode"))
+        job["file"]["refs"].pop("thumbnail")
+        self.assertEqual(thumbnail_ref(job)[0], "/thumb/s/usb/A~1.BGC")
+        self.assertEqual(thumbnail_ref(None), (None, ""))
+        self.assertEqual(thumbnail_ref({"serial_print": True}), (None, ""))
+
+
 class EnergyMeterTest(unittest.TestCase):
     def test_trapezoid_and_gaps(self):
         from prusa_watch.notify import EnergyMeter

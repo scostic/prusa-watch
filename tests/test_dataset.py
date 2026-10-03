@@ -84,6 +84,7 @@ class AgentDatasetTest(unittest.TestCase):
                 mock.patch.object(agent_mod, "CloudWatchHeartbeat"):
             a = agent_mod.Agent(cfg)
         a.printer = mock.Mock(base="http://10.0.0.5")
+        a.printer.job.return_value = None
         a.judge.last_usage = {}
         a.hec = mock.Mock()
         a.ha = mock.Mock()

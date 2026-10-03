@@ -22,6 +22,7 @@ def make_agent(**over):
             mock.patch.object(agent_mod, "CloudWatchHeartbeat"):
         a = agent_mod.Agent(cfg)
     a.printer = mock.Mock(base="http://10.0.0.5")
+    a.printer.job.return_value = None                     # no G-code thumbnail unless a test sets one
     a.judge.last_usage = {"latency_ms": 900, "input_tokens": 1500, "output_tokens": 80}
     a.hec = mock.Mock()
     return a
@@ -42,7 +43,7 @@ class AgentTickTest(unittest.TestCase):
         self.assertIn("PAUSED", subject)
         # each tick = main check + confirmation; the 2nd tick's main check has the 1st frame as reference
         self.assertEqual(a.judge.assess.call_count, 6)
-        _, ref, ctx = a.judge.assess.call_args_list[2].args
+        _, ref, ctx, _expected = a.judge.assess.call_args_list[2].args
         self.assertEqual(ref, b"JPEG")
         self.assertIn("Z moved", ctx)
 
@@ -155,6 +156,40 @@ class AgentTickTest(unittest.TestCase):
         a.tick()
         a.ha.read_number.assert_not_called()
         self.assertNotIn("print_energy_kwh", a.ha.publish.call_args.kwargs)
+
+    def test_gcode_thumbnail_sent_once_per_job(self, _grab, _thumb):
+        a = make_agent()
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=11)
+        a.printer.job.return_value = {"id": 11, "file": {"display_name": "lattice_sphere.bgcode",
+                                                         "refs": {"thumbnail": "/thumb/l/usb/LATTIC~1.BGC"}}}
+        a.printer.fetch.return_value = b"QOIF..."
+        a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
+        with mock.patch.object(agent_mod.camera, "to_jpeg", return_value=b"EXPJPEG") as conv:
+            a.tick()
+            a.tick()
+        a.printer.fetch.assert_called_once_with("/thumb/l/usb/LATTIC~1.BGC")
+        conv.assert_called_once_with(b"QOIF...")
+        cur, ref, ctx, expected = a.judge.assess.call_args.args
+        self.assertEqual(expected, b"EXPJPEG")
+        self.assertIn("Print file: lattice_sphere.bgcode", ctx)
+
+    def test_gcode_thumbnail_failure_does_not_block(self, _grab, _thumb):
+        a = make_agent()
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=12)
+        a.printer.job.side_effect = ConnectionError("boom")
+        a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
+        a.tick()
+        a.tick()
+        self.assertEqual(a.printer.job.call_count, 1)                  # failure cached for the job
+        self.assertIsNone(a.judge.assess.call_args.args[3])
+        self.assertEqual(a.last_verdict.status, "ok")
+
+    def test_gcode_thumbnail_disabled(self, _grab, _thumb):
+        a = make_agent(use_gcode_thumbnail=False)
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=13)
+        a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
+        a.tick()
+        a.printer.job.assert_not_called()
 
     def test_heartbeat_throttled(self, _grab, _thumb):
         a = make_agent(heartbeat_min=5)

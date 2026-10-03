@@ -41,6 +41,13 @@ clearly has not grown although telemetry shows Z rose by several millimetres.
 - layer_shift (layers offset sideways), warping (corners lifted off the bed), heavy stringing.
 - camera_problem: ONLY when the image itself is unusable - black, blurred, covered, or not showing the printer.
 
+You may also get an EXPECTED image: the slicer's preview of the FINISHED object from the G-code. Use it \
+to know what shape you are looking for and where the part should be - a lattice, a thin tower or several \
+small parts look very different from a solid block. The real part is only partly printed (see progress), \
+seen from the camera's angle, in the filament colour (often greyscale at night). Something on the bed \
+that cannot belong to that shape (loose strands, a lump, a toppled piece) is a defect; an unfinished or \
+partly hidden version of the expected shape is not.
+
 The REFERENCE frame (a few minutes older) is for judging growth and newly appearing defects only. \
 Telemetry matters: stable temperatures at target, fans spinning and Z rising mean the printer is working.
 
@@ -170,8 +177,12 @@ class VisionJudge:
             timeout=60.0,
         )
 
-    def assess(self, current: bytes, reference: Optional[bytes], context: str) -> Verdict:
+    def assess(self, current: bytes, reference: Optional[bytes], context: str,
+               expected: Optional[bytes] = None) -> Verdict:
         content: list[dict] = []
+        if expected is not None:
+            content += [{"type": "text", "text": "EXPECTED (slicer preview of the finished object):"},
+                        _image_block(expected)]
         if reference is not None:
             content += [{"type": "text", "text": "REFERENCE frame (earlier):"}, _image_block(reference)]
         content += [{"type": "text", "text": "CURRENT frame:"}, _image_block(current)]

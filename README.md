@@ -120,7 +120,24 @@ Region used below: `eu-central-1` with the EU cross-region inference profile.
 3. Fill in the configuration (printer, camera, AWS key, emails), **Start**, and watch the *Log* tab.
    See [`prusa_watch/DOCS.md`](prusa_watch/DOCS.md) for every option.
 
-### 4. Optional extras
+### 4. Optional: smart plug (energy per print + power-off)
+Any plug that gives Home Assistant a power sensor in **W** works (tested with a TP-Link **Tapo P110** via the
+built-in *TP-Link Smart Home* integration).
+1. Add the plug to Home Assistant and find its power sensor's **Entity ID**
+   (*Settings → Entities → plug → ⚙️*), e.g. `sensor.<plug>_current_consumption`.
+2. In the add-on configuration set `power_entity` to that ID and `energy_price` to your price per kWh.
+   The add-on integrates power over the job itself (many plugs only offer "today's kWh", which resets at
+   midnight), so it works for overnight prints.
+3. Optional automation [`ha/prusa-power-off-after-print.yaml`](ha/prusa-power-off-after-print.yaml):
+   switches the plug off 10 minutes after the print finished **and the nozzle is below 50 °C** - never
+   while printing or paused. Replace `switch.printer_plug` with your plug's switch. Test it on a short
+   print first.
+
+> **Tapo plugs on newer firmware** may fail to add with *"Unsupported device … encrypt_type TPAP"*.
+> In the Tapo app: *Me → Third-Party Services → Third-Party Compatibility* - switch it off and on, wait
+> 30 seconds, then add the plug again.
+
+### 5. Optional extras
 - **SenseCAP Indicator D1** status page: [`sensecap/sensecap-prusa-watch.yaml`](sensecap/sensecap-prusa-watch.yaml)
   (ESPHome + LVGL). Coloured banner, progress bar, nozzle/bed/Z tiles and the AI description; jumps to
   full brightness on a failure.
@@ -129,6 +146,30 @@ Region used below: `eu-central-1` with the EU cross-region inference profile.
   set `hec_url` / `hec_token`. Prefer an HTTPS HEC endpoint.
   [`aws/ses-smtp-for-splunk.ps1`](aws/ses-smtp-for-splunk.ps1) creates SES SMTP credentials if your Splunk
   server needs a mail relay.
+
+## What you get in Home Assistant
+
+`sensor.prusa_watch` - state is the latest verdict while printing (`ok`, `warning`, `failure`,
+`camera_problem`) and otherwise the printer state (`idle`, `paused`, `attention`, `finished`, `offline`,
+`camera_error`, `analysis_error`).
+
+| Attribute | |
+|---|---|
+| `issue`, `confidence`, `description`, `part_visible`, `streak`, `last_check` | the latest AI verdict |
+| `printer_state`, `job_id`, `progress`, `time_remaining`, `axis_z` | from PrusaLink |
+| `temp_nozzle`, `target_nozzle`, `temp_bed`, `target_bed` | temperatures (°C) |
+| `power_w`, `print_energy_kwh`, `print_energy_cost` | with a smart plug (`power_entity`) |
+
+Plus `/share/prusa_watch/latest.jpg` (latest frame) and `flagged-*.jpg` (warnings and failures).
+
+| Email | When |
+|---|---|
+| Possible failure / PAUSED / STOPPED | 3 consecutive confirmed failure verdicts (cooldown 30 min) |
+| Printer needs attention | PrusaLink reports `ERROR` or `ATTENTION` (runout, thermal, fan) |
+| Camera unreachable | 5 failed frame grabs in a row during a print |
+| Watchdog is BLIND | printing, but no successful AI check for 10 minutes |
+| Print finished | with the final photo and, with a plug, energy and cost |
+| CloudWatch ALARM / OK (SNS) | the add-on's heartbeat stopped / came back |
 
 ## Develop and test locally
 

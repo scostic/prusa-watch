@@ -32,9 +32,20 @@ minute, sends it with PrusaLink telemetry to Claude Haiku 4.5 on Amazon Bedrock,
 | `hec_url`, `hec_token`, `hec_index`, `hec_verify_tls` | optional Splunk HEC output |
 
 ## Outputs
-- `sensor.prusa_watch` in Home Assistant (verdict or printer state + telemetry attributes).
+- `sensor.prusa_watch`: state = latest verdict while printing (`ok` / `warning` / `failure` /
+  `camera_problem`), otherwise the printer state (`idle`, `paused`, `attention`, `finished`, `offline`...).
+  Attributes: `issue`, `confidence`, `description`, `part_visible`, `streak`, `last_check`, `printer_state`,
+  `job_id`, `progress`, `time_remaining`, `axis_z`, `temp_nozzle`, `target_nozzle`, `temp_bed`, `target_bed`,
+  and with a smart plug `power_w`, `print_energy_kwh`, `print_energy_cost`.
 - `/share/prusa_watch/latest.jpg` and `flagged-*.jpg` for warnings/failures.
-- Emails: possible failure, printer attention, camera unreachable, watchdog blind, print finished.
+- Emails: possible failure, printer attention, camera unreachable, watchdog blind, print finished
+  (with energy and cost when `power_entity` is set).
+- Optional Splunk events (`type` = `check`, `state`, `email`, `error`, `heartbeat`, `energy`).
+
+## Smart plug
+Set `power_entity` to the plug's power sensor in W (e.g. `sensor.<plug>_current_consumption`) and
+`energy_price` to your price per kWh. An example automation that switches the plug off after the print, once
+the nozzle is below 50 °C, is in the repository under `ha/`.
 
 Keep `auto_action: none` until you have watched a few prints and tested a deliberate failure.
 This is a convenience monitor, not a safety device - never leave a printer unattended if that is unsafe.

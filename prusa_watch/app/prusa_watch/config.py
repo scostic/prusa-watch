@@ -34,6 +34,12 @@ class Config:
     power_entity: str = ""            # HA sensor with the printer plug's power in W
     energy_price: float = 0.0         # price per kWh, for the cost per print
     currency: str = "€"
+    dataset_enabled: bool = True      # keep labelled samples for evaluation (/share/prusa_watch/dataset)
+    dataset_ok_every: int = 10        # keep 1 in N 'ok' checks (all warnings/failures are kept)
+    dataset_max: int = 2000
+    label_button_correct: str = "input_button.prusa_watch_correct"
+    label_button_false_alarm: str = "input_button.prusa_watch_false_alarm"
+    label_button_missed: str = "input_button.prusa_watch_missed_failure"
     heartbeat_min: int = 5
     cloudwatch_heartbeat: bool = True
     blind_alert_min: int = 10

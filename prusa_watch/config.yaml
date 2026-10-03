@@ -1,5 +1,5 @@
 name: Prusa Watch
-version: "0.5.0"
+version: "0.6.0"
 slug: prusa_watch
 url: https://github.com/scostic/prusa-watch
 description: AI print-failure watchdog for a Prusa printer + Buddy3D camera (Amazon Bedrock vision, SES email alerts)
@@ -10,6 +10,10 @@ init: false
 startup: application
 boot: auto
 homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:printer-3d-nozzle-alert
+panel_title: Prusa Watch
 map:
   - share:rw
 options:
@@ -38,6 +42,12 @@ options:
   power_entity: ""
   energy_price: 0.0
   currency: "€"
+  dataset_enabled: true
+  dataset_ok_every: 10
+  dataset_max: 2000
+  label_button_correct: input_button.prusa_watch_correct
+  label_button_false_alarm: input_button.prusa_watch_false_alarm
+  label_button_missed: input_button.prusa_watch_missed_failure
   heartbeat_min: 5
   cloudwatch_heartbeat: true
   blind_alert_min: 10
@@ -72,6 +82,12 @@ schema:
   power_entity: str?
   energy_price: float(0,10)
   currency: str
+  dataset_enabled: bool
+  dataset_ok_every: int(1,100)
+  dataset_max: int(100,20000)
+  label_button_correct: str?
+  label_button_false_alarm: str?
+  label_button_missed: str?
   heartbeat_min: int(1,60)
   cloudwatch_heartbeat: bool
   blind_alert_min: int(3,120)

@@ -171,6 +171,22 @@ Plus `/share/prusa_watch/latest.jpg` (latest frame) and `flagged-*.jpg` (warning
 | Print finished | with the final photo and, with a plug, energy and cost |
 | CloudWatch ALARM / OK (SNS) | the add-on's heartbeat stopped / came back |
 
+## Measuring detection: the labelled test set
+
+False alarms are easy to measure; missed failures are not. Prusa Watch therefore keeps a labelled test set:
+
+1. Every warning/failure check - and 1 in 10 normal checks - is saved to `/share/prusa_watch/dataset/`
+   with both frames, the exact context the model saw and its verdict.
+2. Label them in the **Prusa Watch** panel in the Home Assistant sidebar (✅ OK print / ❌ Real failure + issue),
+   or with three button helpers on a dashboard: *Correct* and *False alarm* label the latest alert,
+   *Missed failure* saves the current frame as a real failure the model didn't catch.
+3. Copy the folder to your PC and measure:
+   ```bash
+   PYTHONPATH=prusa_watch/app python eval/replay.py --dataset eval/dataset --variants recorded,v2
+   ```
+   `recorded` scores what the live model said (free); `v2`/`v1` re-run the current/original prompt.
+   Output: confusion matrix, **recall (failures caught)**, precision, false-alarm rate, recall per issue.
+
 ## Develop and test locally
 
 ```bash

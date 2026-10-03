@@ -42,6 +42,13 @@ minute, sends it with PrusaLink telemetry to Claude Haiku 4.5 on Amazon Bedrock,
   (with energy and cost when `power_entity` is set).
 - Optional Splunk events (`type` = `check`, `state`, `email`, `error`, `heartbeat`, `energy`).
 
+## Labelling (test set)
+Open **Prusa Watch** in the Home Assistant sidebar to label saved checks as ✅ OK print or ❌ Real failure.
+For quick labels, create three *Button* helpers (Settings → Devices & services → Helpers → Create helper →
+Button) named **Prusa Watch Correct**, **Prusa Watch False alarm** and **Prusa Watch Missed failure**
+(entity IDs `input_button.prusa_watch_correct`, `..._false_alarm`, `..._missed_failure`), and put them on a
+dashboard. Options: `dataset_enabled`, `dataset_ok_every`, `dataset_max`, `label_button_*`.
+
 ## Smart plug
 Set `power_entity` to the plug's power sensor in W (e.g. `sensor.<plug>_current_consumption`) and
 `energy_price` to your price per kWh. An example automation that switches the plug off after the print, once

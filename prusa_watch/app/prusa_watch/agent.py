@@ -10,6 +10,7 @@ from typing import Optional
 from . import camera
 from .config import Config
 from . import __version__
+from .dataset import Dataset
 from .notify import CloudWatchHeartbeat, EnergyMeter, HASensor, HECSender, Mailer
 from .prusalink import PrinterStatus, PrusaLink
 from .vision import Verdict, VisionJudge
@@ -20,6 +21,7 @@ log = logging.getLogger(__name__)
 ATTENTION_STATES = {"ERROR", "ATTENTION"}
 CAMERA_FAIL_ALERT_AFTER = 5
 CONFIRM_DELAY_S = 4
+WEBUI_PORT = 8099          # must match ingress_port in config.yaml
 
 
 @dataclass
@@ -52,6 +54,12 @@ class Agent:
         self.printer_offline = False
         self.energy = EnergyMeter()
         self.power_w: Optional[float] = None
+        self.dataset: Optional[Dataset] = None
+        if cfg.dataset_enabled and cfg.snapshot_dir:
+            self.dataset = Dataset(os.path.join(cfg.snapshot_dir, "dataset"),
+                                   ok_every=cfg.dataset_ok_every, max_samples=cfg.dataset_max)
+        self.last_check: Optional[dict] = None          # args to (force-)save the latest check as a sample
+        self.button_seen: dict[str, Optional[str]] = {}
         self.watchdog = Watchdog(cfg.failure_threshold, cfg.min_confidence,
                                  cfg.alert_cooldown_min * 60, cfg.auto_action, cfg.auto_action_threshold)
         self.history: deque[Frame] = deque()
@@ -179,6 +187,59 @@ class Agent:
                        downgraded=f"not confirmed by a second frame "
                                   f"({second.status}: {second.description[:120]})"), info
 
+    # ---------- labelled dataset ----------
+    def _save_sample(self, force: bool = False) -> Optional[str]:
+        if not (self.dataset and self.last_check):
+            return None
+        if self.last_check.get("sid"):
+            return self.last_check["sid"]
+        args = {k: v for k, v in self.last_check.items() if k != "sid"}
+        sid = self.dataset.save(**args, model=self.cfg.bedrock_model_id, force=force)
+        self.last_check["sid"] = sid
+        return sid
+
+    def _poll_label_buttons(self) -> None:
+        """HA input_button helpers: Correct / False alarm label the latest flagged sample,
+        Missed failure labels the latest check as a real failure."""
+        if not self.dataset:
+            return
+        for kind, entity in (("correct", self.cfg.label_button_correct),
+                             ("false_alarm", self.cfg.label_button_false_alarm),
+                             ("missed", self.cfg.label_button_missed)):
+            state = self.ha.read_state(entity) if entity else None
+            if state is None or state in ("unknown", "unavailable"):
+                self.button_seen.setdefault(entity, state)
+                continue
+            first = entity not in self.button_seen or self.button_seen[entity] in (None, "unknown", "unavailable")
+            changed = state != self.button_seen.get(entity)
+            self.button_seen[entity] = state
+            if first or not changed:
+                continue                                # first sight after start: remember, don't act
+            try:
+                self._apply_button(kind)
+            except (KeyError, ValueError) as e:
+                log.warning("Label button %s: %s", kind, e)
+
+    def _apply_button(self, kind: str) -> None:
+        if kind == "missed":
+            sid = self._save_sample(force=True)
+            if not sid:
+                raise ValueError("no recent check to label")
+            self.dataset.label(sid, "failure", "other", source="button")
+            self._event("label", sample=sid, truth="failure", via="missed_failure_button")
+            return
+        m = self.dataset.latest(flagged_only=True)
+        if not m:
+            raise ValueError("no flagged sample to label")
+        if kind == "correct":
+            issue = m["verdict"].get("issue", "other")
+            self.dataset.label(m["id"], "failure", issue if issue != "none" else "other", source="button")
+            truth = "failure"
+        else:
+            self.dataset.label(m["id"], "ok", source="button")
+            truth = "ok"
+        self._event("label", sample=m["id"], truth=truth, via=f"{kind}_button")
+
     # ---------- smart plug energy ----------
     ACTIVE_STATES = {"PRINTING", "PAUSED", "ATTENTION", "BUSY"}
 
@@ -229,6 +290,7 @@ class Agent:
     # ---------- main tick ----------
     def tick(self) -> None:
         now = time.time()
+        self._poll_label_buttons()
         try:
             st = self.printer.status()
         except Exception as e:
@@ -336,6 +398,10 @@ class Agent:
                  verdict.part_visible, verdict.description,
                  f" [downgraded: {verdict.downgraded}]" if verdict.downgraded else "")
         self._save(jpeg, flagged=verdict.status in ("warning", "failure"))
+        self.last_check = {"t": now, "job_id": st.job_id, "current": jpeg,
+                           "reference": ref.jpeg if ref else None, "context": "\n".join(context),
+                           "verdict": verdict.as_dict()}
+        sample_id = self._save_sample()
 
         decision = self.watchdog.observe(verdict, now)
         action_note = ""
@@ -358,7 +424,7 @@ class Agent:
             self._email(subject, self._status_body(st, verdict, extra), jpeg)
 
         self._event("check", st, verdict, streak=self.watchdog.streak, alert=decision.alert,
-                    action=decision.action, action_result=action_note or None,
+                    action=decision.action, action_result=action_note or None, sample=sample_id,
                     **metrics, **usage)
         self.ha.publish(
             verdict.status, issue=verdict.issue, confidence=round(verdict.confidence, 2),
@@ -372,6 +438,12 @@ class Agent:
         log.info("Watching %s, camera %s, model %s, every %ss (auto_action=%s)",
                  self.cfg.printer_host, self.cfg.camera_url, self.cfg.bedrock_model_id,
                  self.cfg.check_interval_s, self.cfg.auto_action)
+        if self.dataset and not once:
+            try:
+                from . import webui
+                webui.start(self.dataset, WEBUI_PORT)
+            except OSError as e:
+                log.warning("Labelling page not started: %s", e)
         if self.cfg.prusalink_api_key:
             auth = f"API key ({len(self.cfg.prusalink_api_key)} chars)"
         elif self.cfg.prusalink_password:

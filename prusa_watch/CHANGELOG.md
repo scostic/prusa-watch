@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+- Labelled test set: every warning/failure check (and 1 in `dataset_ok_every` normal checks) is saved to
+  `/share/prusa_watch/dataset/<id>/` with both frames, the exact context the model saw and its verdict.
+- **"Prusa Watch" panel in the Home Assistant sidebar** (ingress) to label samples: ✅ OK print / ❌ Real failure + issue.
+- Quick labels from `input_button` helpers: *Correct* / *False alarm* (latest alert) and *Missed failure*
+  (saves and labels the latest frame as a real failure).
+- `eval/replay.py --dataset` reports a confusion matrix, recall (failures caught), precision and false-alarm
+  rate; variant `recorded` scores the live verdicts without any API calls.
+
 ## 0.5.0
 - Smart-plug energy per print: set `power_entity` to the plug's power sensor (W) and `energy_price`
   (per kWh). The add-on integrates power over the job and reports kWh and cost in the "Print finished"

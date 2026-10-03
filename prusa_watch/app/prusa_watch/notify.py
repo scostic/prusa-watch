@@ -134,16 +134,23 @@ class HASensor:
         except requests.RequestException as e:
             log.warning("Could not update Home Assistant sensor: %s", e)
 
-    def read_number(self, entity_id: str) -> Optional[float]:
-        """Numeric state of another HA entity (e.g. a smart plug's power sensor), None if unavailable."""
+    def read_state(self, entity_id: str) -> Optional[str]:
+        """Raw state string of another HA entity, None if it doesn't exist or HA is unreachable."""
         if not (self.token and entity_id):
             return None
         try:
             r = requests.get(f"http://supervisor/core/api/states/{entity_id}", timeout=5,
                              headers={"Authorization": f"Bearer {self.token}"})
             r.raise_for_status()
-            return float(r.json()["state"])
+            return str(r.json()["state"])
         except (requests.RequestException, KeyError, TypeError, ValueError):
+            return None
+
+    def read_number(self, entity_id: str) -> Optional[float]:
+        """Numeric state of another HA entity (e.g. a smart plug's power sensor), None if unavailable."""
+        try:
+            return float(self.read_state(entity_id))
+        except (TypeError, ValueError):
             return None      # unknown / unavailable / not numeric
 
 

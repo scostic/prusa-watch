@@ -127,6 +127,29 @@ class HECTest(unittest.TestCase):
         self.assertEqual(h.backlog, [])
 
 
+class ProviderTest(unittest.TestCase):
+    BASE = {"printer_host": "10.0.0.5", "camera_url": "rtsp://10.0.0.6/live",
+            "email_from": "a@b.c", "email_to": "x@y.z"}
+
+    def test_model_id_and_validation(self):
+        cfg = config.Config(**self.BASE)
+        cfg.validate()
+        self.assertEqual((cfg.ai_provider, cfg.model_id), ("bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"))
+        cfg = config.Config(**self.BASE, ai_provider="anthropic", anthropic_api_key=" sk-ant-x \n")
+        cfg.validate()
+        self.assertEqual((cfg.model_id, cfg.anthropic_api_key), ("claude-haiku-5-5", "sk-ant-x"))
+        with self.assertRaises(ValueError):
+            config.Config(**self.BASE, ai_provider="anthropic").validate()      # key missing
+        with self.assertRaises(ValueError):
+            config.Config(**self.BASE, ai_provider="openai").validate()
+
+    def test_cost(self):
+        from prusa_watch.vision import cost_usd
+        self.assertAlmostEqual(cost_usd("claude-haiku-5-5", 2600, 150), 0.000335)
+        self.assertAlmostEqual(cost_usd("eu.anthropic.claude-haiku-4-5-20251001-v1:0", 2000, 120), 0.00286)
+        self.assertIsNone(cost_usd("some-future-model", 1000, 100))
+
+
 class ThumbnailRefTest(unittest.TestCase):
     def test_refs(self):
         from prusa_watch.prusalink import thumbnail_ref

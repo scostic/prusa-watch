@@ -160,22 +160,47 @@ def _image_block(jpeg: bytes) -> dict:
     }
 
 
+# USD per million tokens (input, output) for cost tracking; unknown models report no cost.
+PRICES = {
+    "claude-haiku-5-5": (0.10, 0.50),                               # Claude API, prompts < 100k tokens
+    "claude-haiku-4-5": (1.00, 5.00),
+    "eu.anthropic.claude-haiku-4-5-20251001-v1:0": (1.10, 5.50),    # Bedrock EU cross-region profile
+    "anthropic.claude-haiku-5-5": (0.10, 0.50),
+}
+PROVIDERS = ("bedrock", "anthropic")
+
+
+def cost_usd(model_id: str, input_tokens: int, output_tokens: int) -> Optional[float]:
+    price = PRICES.get(model_id)
+    if not price:
+        return None
+    return round(input_tokens * price[0] / 1e6 + output_tokens * price[1] / 1e6, 6)
+
+
 class VisionJudge:
     def __init__(self, region: str, model_id: str, access_key: str = "", secret_key: str = "",
-                 system_prompt: str = SYSTEM_PROMPT, tool: Optional[dict] = None):
-        from anthropic import AnthropicBedrock  # imported lazily so tests don't need the SDK
-
+                 system_prompt: str = SYSTEM_PROMPT, tool: Optional[dict] = None,
+                 provider: str = "bedrock", api_key: str = ""):
+        # SDK imported lazily so tests don't need it
         self.model_id = model_id
+        self.provider = provider
         self.system_prompt = system_prompt
         self.tool = tool or TOOL
         self.last_usage: dict = {}
-        self.client = AnthropicBedrock(
-            aws_region=region,
-            aws_access_key=access_key or None,
-            aws_secret_key=secret_key or None,
-            max_retries=3,
-            timeout=60.0,
-        )
+        if provider == "anthropic":
+            from anthropic import Anthropic
+
+            self.client = Anthropic(api_key=api_key or None, max_retries=3, timeout=60.0)
+        else:
+            from anthropic import AnthropicBedrock
+
+            self.client = AnthropicBedrock(
+                aws_region=region,
+                aws_access_key=access_key or None,
+                aws_secret_key=secret_key or None,
+                max_retries=3,
+                timeout=60.0,
+            )
 
     def assess(self, current: bytes, reference: Optional[bytes], context: str,
                expected: Optional[bytes] = None) -> Verdict:
@@ -202,7 +227,10 @@ class VisionJudge:
             "input_tokens": response.usage.input_tokens,
             "output_tokens": response.usage.output_tokens,
         }
-        log.debug("Bedrock usage: %s", self.last_usage)
+        cost = cost_usd(self.model_id, response.usage.input_tokens, response.usage.output_tokens)
+        if cost is not None:
+            self.last_usage["cost_usd"] = cost
+        log.debug("%s usage: %s", self.provider, self.last_usage)
         if response.stop_reason == "refusal":
             return Verdict("warning", "other", 0.0, "Model declined to assess this frame.")
         return parse_verdict(response.content)

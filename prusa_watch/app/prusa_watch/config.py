@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields
 log = logging.getLogger(__name__)
 
 AUTO_ACTIONS = ("none", "pause", "stop")
+PROVIDERS = ("bedrock", "anthropic")
 
 
 @dataclass
@@ -19,6 +20,9 @@ class Config:
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     bedrock_model_id: str = "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ai_provider: str = "bedrock"                 # bedrock | anthropic (Claude API)
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-5-5"
     email_from: str = ""
     email_to: str = ""
     check_interval_s: int = 60
@@ -52,6 +56,10 @@ class Config:
     log_level: str = "info"
 
     @property
+    def model_id(self) -> str:
+        return self.anthropic_model if self.ai_provider == "anthropic" else self.bedrock_model_id
+
+    @property
     def recipients(self) -> list[str]:
         return [a.strip() for a in self.email_to.split(",") if a.strip()]
 
@@ -59,9 +67,14 @@ class Config:
         # Pasted secrets often carry stray spaces/newlines.
         for name in ("printer_host", "camera_url", "prusalink_api_key", "prusalink_password",
                      "aws_region", "aws_access_key_id", "aws_secret_access_key",
-                     "bedrock_model_id", "email_from", "email_to", "hec_url", "hec_token", "hec_index", "power_entity"):
+                     "bedrock_model_id", "email_from", "email_to", "hec_url", "hec_token", "hec_index", "power_entity",
+                     "ai_provider", "anthropic_api_key", "anthropic_model"):
             setattr(self, name, str(getattr(self, name) or "").strip())
         problems = []
+        if self.ai_provider not in PROVIDERS:
+            problems.append(f"ai_provider must be one of {PROVIDERS}")
+        if self.ai_provider == "anthropic" and not self.anthropic_api_key:
+            problems.append("anthropic_api_key is required when ai_provider is 'anthropic'")
         if not self.printer_host or "X" in self.printer_host:
             problems.append("printer_host is not set")
         if not self.camera_url or "Y" in self.camera_url:

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+- **Claude API as an alternative to Bedrock**: `ai_provider: anthropic` + `anthropic_api_key`, default model
+  **Claude Haiku 5.5** (`claude-haiku-5-5`). Bedrock remains the default; AWS is still used for SES email and
+  the CloudWatch heartbeat.
+- Cost per check is computed in the add-on per model and sent as `cost_usd`; the Splunk app uses it.
+- `eval/replay.py --provider/--model` to compare models on the same frames.
+- Same 33 frames from a good print: Haiku 4.5 (Bedrock) 2 false alarms and the part judged "hidden" in 24;
+  **Haiku 5.5 0 false alarms, part seen in 29**, at ~$0.00045 per check (~8× cheaper).
+
 ## 0.7.0
 - The model now also sees **what the part should look like**: the slicer thumbnail embedded in the G-code,
   fetched once per job from PrusaLink (`/api/v1/job` → `file.refs.thumbnail`), converted with ffmpeg

@@ -2,8 +2,8 @@
 
 **An AI print-failure watchdog for Prusa printers, running as a Home Assistant add-on.**
 Every minute during a print it looks at the Buddy3D camera, reads the printer's telemetry, asks
-**Claude Haiku 4.5 on Amazon Bedrock** whether the print is failing, and emails you when it is.
-No extra hardware, no GPU: about **$0.18 per print-hour**.
+**Claude Haiku 5.5** (Claude API) or Claude Haiku 4.5 on Amazon Bedrock whether the print is failing, and
+emails you when it is. No extra hardware, no GPU: about **$0.03 per print-hour** with Haiku 5.5.
 
 Built and tested on an Original Prusa **MK3.5S** with the **Buddy3D camera**, Home Assistant OS on a
 Raspberry Pi 4, and a **SenseCAP Indicator D1** as a desk status display.
@@ -56,16 +56,15 @@ flowchart LR
 
 ## Real numbers
 
-From a 7-hour PETG print (lattice sphere), one check per minute, Claude Haiku 4.5 via the EU
-cross-region inference profile:
+From a 7-hour PETG print (lattice sphere), one check per minute:
 
-| | |
-|---|---|
-| Input / output per check | ~2,000 / ~120 tokens (two 960×540 frames + telemetry) |
-| Cost per check | ~$0.003 |
-| **Cost per print-hour** | **~$0.18** |
-| Bedrock latency | ~2 s |
-| Frame grab (RTSP, ffmpeg on a Pi 4) | ~8 s |
+| | Claude Haiku 4.5 (Bedrock, EU) | **Claude Haiku 5.5 (Claude API)** |
+|---|---|---|
+| Input / output per check | ~2,000 / ~120 tokens | ~2,600 / ~150 tokens (newer tokenizer) |
+| Cost per check | ~$0.003 | **~$0.00045** |
+| **Cost per print-hour** | ~$0.18 | **~$0.03** |
+| Model latency | ~2 s | ~2 s |
+| Frame grab (RTSP, ffmpeg on a Pi 4) | ~8 s | ~8 s |
 
 ### The false-alarm story
 
@@ -85,6 +84,18 @@ print that succeeded:
 | `camera_problem` | 7 | 2 |
 | **false alarms** | **14 / 33** | **2 / 33** |
 
+The same 33 frames on the newer model (current prompt):
+
+| | Haiku 4.5 (Bedrock) | **Haiku 5.5 (Claude API)** |
+|---|---|---|
+| false alarms | 2 / 33 | **0 / 33** |
+| part judged *hidden* / *partly visible* | 24 / 6 | **4 / 29** |
+| cost for the 33 frames | ~$0.10 | **$0.015** |
+
+Haiku 4.5 mostly avoided false alarms by deciding it couldn't see the part; Haiku 5.5 actually recognises
+the lattice part behind the print head and still judges it correctly - a much better basis for catching
+real failures.
+
 Known limitation: a dark part on the black bed in the camera's greyscale night mode is hard to see. Use
 colour mode and some light in the enclosure. Detection of real failures needs more test data -
 contributions of failure frames are very welcome.
@@ -94,7 +105,9 @@ contributions of failure frames are very welcome.
 - Prusa printer with **PrusaLink** (Buddy firmware 6.x: MK4/S, MK3.5/S, MINI, XL, CORE One).
 - **Buddy3D camera** with RTSP enabled (or any RTSP / HTTP snapshot camera).
 - **Home Assistant OS** (tested on a Raspberry Pi 4; `aarch64` and `amd64` images).
-- An **AWS account** with Bedrock access to Anthropic Claude Haiku 4.5 and SES.
+- A **Claude API key** ([console.anthropic.com](https://console.anthropic.com), recommended: Claude Haiku 5.5)
+  *or* Amazon Bedrock access to Claude Haiku 4.5.
+- An **AWS account** for email (SES) and the optional heartbeat alarm (CloudWatch).
 
 ## Setup
 
@@ -104,9 +117,15 @@ contributions of failure frames are very welcome.
    **Streaming = RTSP**. The stream is `rtsp://<camera-ip>/live` (test it in VLC).
    If the image is upside down, set `camera_rotate: 180` - Connect's "Rotate camera" only affects its own UI.
 
-### 2. AWS
-Region used below: `eu-central-1` with the EU cross-region inference profile.
-1. **Bedrock** → *Model catalog* → Anthropic **Claude Haiku 4.5** → submit the one-time use-case form.
+### 2. Model and AWS
+**Recommended - Claude API:** in [console.anthropic.com](https://console.anthropic.com) create a workspace
+with a monthly spend limit and an API key; set `ai_provider: anthropic` and `anthropic_api_key`.
+
+**Alternative - Amazon Bedrock** (keeps everything in one AWS region): *Bedrock → Model catalog →*
+Anthropic **Claude Haiku 4.5** → submit the one-time use-case form; leave `ai_provider: bedrock`.
+
+AWS is needed in both cases for email. Region used below: `eu-central-1`.
+1. *(Bedrock only)* the model access above.
 2. **SES** → *Identities* → verify the sender address (and, while in the SES sandbox, the recipient).
 3. **IAM** → create a user (no console access) with the inline policy [`aws/iam-policy.json`](aws/iam-policy.json)
    (replace `ACCOUNT_ID` and `FROM_ADDRESS`), then create an access key. It can only invoke one model,

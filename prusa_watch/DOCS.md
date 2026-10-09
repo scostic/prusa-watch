@@ -18,7 +18,9 @@ minute, sends it with PrusaLink telemetry to Claude Haiku 4.5 on Amazon Bedrock,
 | `prusalink_api_key` | PrusaLink API key (or use `prusalink_username` / `prusalink_password` digest login) |
 | `camera_url` / `camera_rotate` | RTSP URL; rotate frames 0/90/180/270° if the stream is upside down |
 | `aws_region`, `aws_access_key_id`, `aws_secret_access_key` | the IAM user's key |
-| `bedrock_model_id` | default `eu.anthropic.claude-haiku-4-5-20251001-v1:0` (EU cross-region profile) |
+| `ai_provider` | `bedrock` (Amazon Bedrock) or `anthropic` (Claude API) |
+| `bedrock_model_id` | Bedrock model, default `eu.anthropic.claude-haiku-4-5-20251001-v1:0` (EU cross-region profile) |
+| `anthropic_api_key`, `anthropic_model` | Claude API key from console.anthropic.com and model, default `claude-haiku-5-5` |
 | `email_from`, `email_to` | SES-verified sender; comma-separated recipients |
 | `check_interval_s` | seconds between checks while printing (60) |
 | `compare_minutes` | age of the reference frame used to judge growth (5) |

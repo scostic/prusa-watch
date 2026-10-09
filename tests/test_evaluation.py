@@ -56,7 +56,7 @@ class ReplayRecordedTest(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             replay.run_dataset(SimpleNamespace(dataset=root, variants="recorded", config="unused",
-                                               positive="failure"))
+                                               positive="failure", provider=None, model=None))
         text = out.getvalue()
         self.assertIn("3 labelled samples (2 real failures, 1 ok)", text)
         self.assertIn("recall (failures caught)  50.0%", text)

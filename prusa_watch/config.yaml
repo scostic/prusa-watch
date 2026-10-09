@@ -1,5 +1,5 @@
 name: Prusa Watch
-version: "0.7.0"
+version: "0.8.0"
 slug: prusa_watch
 url: https://github.com/scostic/prusa-watch
 description: AI print-failure watchdog for a Prusa printer + Buddy3D camera (Amazon Bedrock vision, SES email alerts)
@@ -27,6 +27,9 @@ options:
   aws_access_key_id: ""
   aws_secret_access_key: ""
   bedrock_model_id: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+  ai_provider: bedrock
+  anthropic_api_key: ""
+  anthropic_model: claude-haiku-5-5
   email_from: ""
   email_to: ""
   check_interval_s: 60
@@ -68,6 +71,9 @@ schema:
   aws_access_key_id: str
   aws_secret_access_key: password
   bedrock_model_id: str
+  ai_provider: list(bedrock|anthropic)
+  anthropic_api_key: password?
+  anthropic_model: str
   email_from: str
   email_to: str
   check_interval_s: int(20,600)

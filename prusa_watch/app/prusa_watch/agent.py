@@ -38,8 +38,9 @@ class Agent:
         self.dry_run = dry_run
         self.printer = PrusaLink(cfg.printer_host, cfg.prusalink_username, cfg.prusalink_password,
                                  api_key=cfg.prusalink_api_key)
-        self.judge = VisionJudge(cfg.aws_region, cfg.bedrock_model_id,
-                                 cfg.aws_access_key_id, cfg.aws_secret_access_key)
+        self.judge = VisionJudge(cfg.aws_region, cfg.model_id,
+                                 cfg.aws_access_key_id, cfg.aws_secret_access_key,
+                                 provider=cfg.ai_provider, api_key=cfg.anthropic_api_key)
         self.mailer = Mailer(cfg.aws_region, cfg.email_from, cfg.recipients,
                              cfg.aws_access_key_id, cfg.aws_secret_access_key)
         self.ha = HASensor(cfg.ha_sensor)
@@ -79,7 +80,7 @@ class Agent:
         if st is not None:
             ev.update(vars(st))
         if verdict is not None:
-            ev.update(verdict.as_dict(), model=self.cfg.bedrock_model_id)
+            ev.update(verdict.as_dict(), model=self.cfg.model_id, provider=self.cfg.ai_provider)
         ev.update(fields)
         self.hec.send({k: v for k, v in ev.items() if v is not None}, time.time())
 
@@ -217,7 +218,7 @@ class Agent:
         if self.last_check.get("sid"):
             return self.last_check["sid"]
         args = {k: v for k, v in self.last_check.items() if k != "sid"}
-        sid = self.dataset.save(**args, model=self.cfg.bedrock_model_id, force=force)
+        sid = self.dataset.save(**args, model=self.cfg.model_id, force=force)
         self.last_check["sid"] = sid
         return sid
 
@@ -416,8 +417,9 @@ class Agent:
         if verdict.is_failure and self.cfg.confirm_failures:
             verdict, confirm = self._confirm(verdict, ref, context)
             metrics.update(confirm)
-            for k in ("input_tokens", "output_tokens", "latency_ms"):
-                usage[k] = usage.get(k, 0) + self.judge.last_usage.get(k, 0)
+            for k in ("input_tokens", "output_tokens", "latency_ms", "cost_usd"):
+                if k in usage or k in self.judge.last_usage:
+                    usage[k] = round(usage.get(k, 0) + self.judge.last_usage.get(k, 0), 6)
 
         self.last_verdict = verdict
         log.info("Verdict: %s/%s %.2f vis=%s - %s%s", verdict.status, verdict.issue, verdict.confidence,
@@ -463,7 +465,7 @@ class Agent:
 
     def run(self, once: bool = False) -> None:
         log.info("Watching %s, camera %s, model %s, every %ss (auto_action=%s)",
-                 self.cfg.printer_host, self.cfg.camera_url, self.cfg.bedrock_model_id,
+                 self.cfg.printer_host, self.cfg.camera_url, f"{self.cfg.ai_provider}:{self.cfg.model_id}",
                  self.cfg.check_interval_s, self.cfg.auto_action)
         if self.dataset and not once:
             try:

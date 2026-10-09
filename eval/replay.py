@@ -70,18 +70,29 @@ V1_TOOL = {
 
 LEGACY_CONTEXT = ("state=PRINTING progress=~70% nozzle=250/250C bed=90/90C hotend_fan=4700rpm "
                   "print_fan=1800rpm flow=100% speed=100%\n{ref}")
-PRICE_IN, PRICE_OUT = 1.1e-6, 5.5e-6        # Haiku 4.5 via EU profile, USD per token (approx.)
 
 
-def make_judges(cfg_path: str, variants: list[str]) -> dict:
+def make_judges(cfg_path: str, variants: list[str], provider: str = None, model: str = None) -> dict:
+    """Judges for the API variants; provider/model default to the config (ai_provider, model_id)."""
     needed = [v for v in variants if v in ("v1", "v2", "v2-noexp")]
     if not needed:
         return {}
     cfg = config.load(cfg_path)
-    args = (cfg.aws_region, cfg.bedrock_model_id, cfg.aws_access_key_id, cfg.aws_secret_access_key)
-    judges = {"v2": lambda: vision.VisionJudge(*args), "v2-noexp": lambda: vision.VisionJudge(*args),
-              "v1": lambda: vision.VisionJudge(*args, system_prompt=V1_PROMPT, tool=V1_TOOL)}
+    provider = provider or cfg.ai_provider
+    if model:
+        model_id = model
+    else:
+        model_id = cfg.anthropic_model if provider == "anthropic" else cfg.bedrock_model_id
+    print(f"model: {provider}:{model_id}")
+    args = (cfg.aws_region, model_id, cfg.aws_access_key_id, cfg.aws_secret_access_key)
+    kw = {"provider": provider, "api_key": cfg.anthropic_api_key}
+    judges = {"v2": lambda: vision.VisionJudge(*args, **kw), "v2-noexp": lambda: vision.VisionJudge(*args, **kw),
+              "v1": lambda: vision.VisionJudge(*args, system_prompt=V1_PROMPT, tool=V1_TOOL, **kw)}
     return {v: judges[v]() for v in needed}
+
+
+def usage_cost(judge) -> float:
+    return judge.last_usage.get("cost_usd") or 0.0
 
 
 def read(path):
@@ -95,7 +106,7 @@ def run_dataset(args) -> None:
     unknown = set(variants) - {"recorded", "v1", "v2", "v2-noexp"}
     if unknown:
         sys.exit(f"unknown variants: {unknown}")
-    judges = make_judges(args.config, variants)
+    judges = make_judges(args.config, variants, args.provider, args.model)
     positives = set(args.positive.split(","))
 
     samples = []
@@ -124,8 +135,7 @@ def run_dataset(args) -> None:
                                                  read(ref_path) if os.path.isfile(ref_path) else None,
                                                  m.get("context", ""),
                                                  read(exp_path) if use_exp else None)
-                u = judges[variant].last_usage
-                cost += u["input_tokens"] * PRICE_IN + u["output_tokens"] * PRICE_OUT
+                cost += usage_cost(judges[variant])
                 v = verdict.as_dict()
             rows[variant].append({**truth, "id": m["id"], "status": v["status"], "issue": v["issue"],
                                   "confidence": v.get("confidence"), "description": v.get("description", "")})
@@ -142,7 +152,7 @@ def run_dataset(args) -> None:
     out = os.path.join(args.dataset, f"eval-{datetime.now():%Y%m%d-%H%M%S}.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"positives": sorted(positives), "metrics": report, "rows": rows}, f, indent=1)
-    print(f"\napprox Bedrock cost: ${cost:.3f}  -> {out}")
+    print(f"\napprox model cost: ${cost:.3f}  -> {out}")
 
 
 # ---------------------------------------------------------------- legacy: flagged frames of a good print
@@ -152,7 +162,7 @@ def frame_time(path: str) -> datetime:
 
 def run_legacy(args) -> None:
     variants = args.variants.split(",")
-    judges = make_judges(args.config, variants)
+    judges = make_judges(args.config, variants, args.provider, args.model)
     frames = sorted(glob.glob(os.path.join(args.folder, "flagged-*.jpg")))
     results, cost, prev = [], 0.0, None
     for path in frames:
@@ -166,8 +176,7 @@ def run_legacy(args) -> None:
         for variant in variants:
             for run in range(args.runs):
                 v = judges[variant].assess(cur, ref, LEGACY_CONTEXT.format(ref=ref_note))
-                u = judges[variant].last_usage
-                cost += u["input_tokens"] * PRICE_IN + u["output_tokens"] * PRICE_OUT
+                cost += usage_cost(judges[variant])
                 results.append({"frame": os.path.basename(path), "variant": variant, "run": run,
                                 "has_ref": ref is not None, **v.as_dict()})
                 print(f"{os.path.basename(path)} {variant} {v.status:14} {v.issue:24} {v.confidence:.2f} "
@@ -180,7 +189,7 @@ def run_legacy(args) -> None:
         c = collections.Counter(r["status"] for r in results if r["variant"] == variant)
         print(f"{variant}: ok={c['ok']} warning={c['warning']} failure={c['failure']} "
               f"camera_problem={c['camera_problem']}")
-    print(f"approx Bedrock cost: ${cost:.3f}  -> {out}")
+    print(f"approx model cost: ${cost:.3f}  -> {out}")
 
 
 def main() -> None:
@@ -191,6 +200,8 @@ def main() -> None:
     ap.add_argument("--variants", default=None, help="dataset: recorded,v2,v2-noexp,v1   legacy: v1,v2")
     ap.add_argument("--positive", default="failure", help="model statuses counted as an alarm, e.g. failure,warning")
     ap.add_argument("--runs", type=int, default=1, help="legacy mode only")
+    ap.add_argument("--provider", choices=["bedrock", "anthropic"], help="override ai_provider from the config")
+    ap.add_argument("--model", help="override the model id, e.g. claude-haiku-5-5")
     args = ap.parse_args()
     if args.dataset:
         args.variants = args.variants or "recorded,v2"

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+- Heartbeat events carry `provider` and `model`, so Splunk shows which model is active even between prints.
+- AI errors are logged as `AI call failed (<provider>:<model>)` with `component=ai` (previously always "Bedrock").
+
 ## 0.8.0
 - **Claude API as an alternative to Bedrock**: `ai_provider: anthropic` + `anthropic_api_key`, default model
   **Claude Haiku 5.5** (`claude-haiku-5-5`). Bedrock remains the default; AWS is still used for SES email and

@@ -200,6 +200,17 @@ class AgentTickTest(unittest.TestCase):
         a.cloudwatch.beat.assert_called_with(True)
         beats = [c.args[0] for c in a.hec.send.call_args_list if c.args[0]["type"] == "heartbeat"]
         self.assertEqual((len(beats), beats[0]["printer_state"]), (3, "PRINTING"))
+        self.assertEqual((beats[0]["provider"], beats[0]["model"]),
+                         ("bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"))
+
+    def test_ai_error_event_names_provider(self, _grab, _thumb):
+        a = make_agent()
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=3)
+        a.judge.assess.side_effect = RuntimeError("401 invalid x-api-key")
+        a.tick()
+        err = [c.args[0] for c in a.hec.send.call_args_list if c.args[0]["type"] == "error"][0]
+        self.assertEqual((err["component"], err["provider"]), ("ai", "bedrock"))
+        self.assertIn("401", err["error"])
 
     def test_pause_clears_reference(self, _grab, _thumb):
         a = make_agent()

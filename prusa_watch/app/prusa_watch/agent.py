@@ -158,7 +158,8 @@ class Agent:
             self._status_body(st, extra=(
                 f"The printer has been printing for a while, but there has been no successful AI check "
                 f"for {mins} minutes. The print is NOT being watched.\n"
-                f"Likely causes: camera stream down, Bedrock/AWS error, or the Pi overloaded. "
+                f"Likely causes: camera stream down, AI service error ({self.cfg.ai_provider}), "
+                f"or the Pi overloaded. "
                 f"Check the Prusa Watch log in Home Assistant.")),
             self._grab())
 
@@ -170,6 +171,7 @@ class Agent:
         printing = self.prev_state == "PRINTING"
         self.cloudwatch.beat(printing)
         self._event("heartbeat", printer_state=self.prev_state, version=__version__,
+                    provider=self.cfg.ai_provider, model=self.cfg.model_id,
                     streak=self.watchdog.streak, blind=self.blind_alerted,
                     last_check_age_s=round(now - self.last_good_check) if self.last_good_check else None)
 
@@ -404,8 +406,9 @@ class Agent:
         try:
             verdict = self.judge.assess(jpeg, ref.jpeg if ref else None, "\n".join(context), expected)
         except Exception as e:
-            log.warning("Bedrock call failed: %s", e)
-            self._event("error", st, component="bedrock", error=str(e))
+            log.warning("AI call failed (%s:%s): %s", self.cfg.ai_provider, self.cfg.model_id, e)
+            self._event("error", st, component="ai", provider=self.cfg.ai_provider,
+                        model=self.cfg.model_id, error=str(e))
             self.ha.publish("analysis_error", error=str(e), **self._ha_attrs(st))
             return
 

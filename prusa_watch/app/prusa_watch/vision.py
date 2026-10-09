@@ -1,4 +1,4 @@
-"""Print-failure judgement with Claude on Amazon Bedrock."""
+"""Print-failure judgement with Claude (Claude API or Amazon Bedrock)."""
 import base64
 import json
 import logging

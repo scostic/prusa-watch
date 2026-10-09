@@ -1,5 +1,5 @@
 name: Prusa Watch
-version: "0.8.1"
+version: "0.8.2"
 slug: prusa_watch
 url: https://github.com/scostic/prusa-watch
 description: AI print-failure watchdog for a Prusa printer + Buddy3D camera (Amazon Bedrock vision, SES email alerts)

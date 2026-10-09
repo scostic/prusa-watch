@@ -143,6 +143,26 @@ class ProviderTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             config.Config(**self.BASE, ai_provider="openai").validate()
 
+    def test_classify_error(self):
+        from prusa_watch.vision import classify_error
+
+        class APIStatusError(Exception):
+            pass
+
+        class AuthenticationError(APIStatusError):
+            pass
+
+        class APIConnectionError(Exception):
+            pass
+
+        class APITimeoutError(APIConnectionError):
+            pass
+
+        self.assertEqual(classify_error(AuthenticationError("x")), ("invalid API key / credentials (401)", True))
+        self.assertEqual(classify_error(APITimeoutError("x"))[1], False)       # most specific class wins
+        self.assertIn("timed out", classify_error(APITimeoutError("x"))[0])
+        self.assertEqual(classify_error(ValueError("x")), ("ValueError", False))
+
     def test_cost(self):
         from prusa_watch.vision import cost_usd
         self.assertAlmostEqual(cost_usd("claude-haiku-5-5", 2600, 150), 0.000335)

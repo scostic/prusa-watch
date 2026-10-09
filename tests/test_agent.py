@@ -203,6 +203,30 @@ class AgentTickTest(unittest.TestCase):
         self.assertEqual((beats[0]["provider"], beats[0]["model"]),
                          ("bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"))
 
+    def test_ai_selfcheck_ok(self, _grab, _thumb):
+        a = make_agent()
+        a.judge.check.return_value = (True, "claude-haiku-5-5 available", False)
+        self.assertTrue(a.ai_selfcheck())
+        ev = a.hec.send.call_args.args[0]
+        self.assertEqual((ev["type"], ev["ok"]), ("ai_check", True))
+        a.mailer.send.assert_not_called()
+
+    def test_ai_selfcheck_bad_key_emails(self, _grab, _thumb):
+        a = make_agent()
+        a.judge.check.return_value = (False, "invalid API key / credentials (401): ...", True)
+        self.assertFalse(a.ai_selfcheck())
+        subject, body = a.mailer.send.call_args.args[:2]
+        self.assertIn("AI provider not working", subject)
+        self.assertIn("401", body)
+
+    def test_ai_selfcheck_network_error_no_email(self, _grab, _thumb):
+        a = make_agent()
+        a.judge.check.return_value = (False, "cannot reach the AI service (network)", False)
+        self.assertFalse(a.ai_selfcheck())
+        a.mailer.send.assert_not_called()
+        a.judge.check.side_effect = RuntimeError("boom")          # a crashing check never propagates
+        self.assertFalse(a.ai_selfcheck())
+
     def test_ai_error_event_names_provider(self, _grab, _thumb):
         a = make_agent()
         a.printer.status.return_value = PrinterStatus("PRINTING", job_id=3)

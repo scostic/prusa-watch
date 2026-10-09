@@ -163,6 +163,27 @@ class Agent:
                 f"Check the Prusa Watch log in Home Assistant.")),
             self._grab())
 
+    def ai_selfcheck(self) -> bool:
+        """Verify the AI provider at startup so a bad key is found before a print, not during one."""
+        target = f"{self.cfg.ai_provider}:{self.cfg.model_id}"
+        try:
+            ok, detail, config_error = self.judge.check()
+        except Exception as e:                       # never let the self-test stop the watchdog
+            ok, detail, config_error = False, str(e), False
+        self._event("ai_check", ok=ok, provider=self.cfg.ai_provider, model=self.cfg.model_id,
+                    detail=detail[:300], config_error=config_error)
+        if ok:
+            log.info("AI provider check OK (%s): %s", target, detail)
+            return True
+        log.error("AI provider check FAILED (%s): %s", target, detail)
+        if config_error:
+            self._email(f"[Prusa Watch] AI provider not working: {target}",
+                        f"The startup check of the AI provider failed, so prints will NOT be checked.\n\n"
+                        f"Provider : {self.cfg.ai_provider}\nModel    : {self.cfg.model_id}\n"
+                        f"Problem  : {detail}\n\n"
+                        f"Fix the add-on configuration (API key / model) in Home Assistant and restart it.")
+        return False
+
     def heartbeat(self, now: float) -> None:
         """Proof of life for the outside world (CloudWatch alarm + Splunk), every heartbeat_min."""
         if now - self.last_beat < self.cfg.heartbeat_min * 60:
@@ -483,6 +504,7 @@ class Agent:
         else:
             auth = "NONE - set prusalink_api_key in the configuration"
         log.info("PrusaLink auth: %s", auth)
+        self.ai_selfcheck()
         while True:
             started = time.monotonic()
             try:

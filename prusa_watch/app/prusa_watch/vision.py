@@ -170,6 +170,26 @@ PRICES = {
 PROVIDERS = ("bedrock", "anthropic")
 
 
+# SDK exception class name -> (problem, is it a configuration error the user must fix?)
+_ERROR_KINDS = {
+    "AuthenticationError": ("invalid API key / credentials (401)", True),
+    "PermissionDeniedError": ("no access to this model (403)", True),
+    "NotFoundError": ("model not found (404) - check the model id", True),
+    "BadRequestError": ("request rejected (400)", True),
+    "RateLimitError": ("rate limited (429)", False),
+    "APIConnectionError": ("cannot reach the AI service (network)", False),
+    "APITimeoutError": ("AI service timed out", False),
+}
+
+
+def classify_error(e: Exception) -> tuple[str, bool]:
+    """(human description, is_config_error) for an exception from the Anthropic SDK or boto."""
+    for cls in type(e).__mro__:
+        if cls.__name__ in _ERROR_KINDS:
+            return _ERROR_KINDS[cls.__name__]
+    return f"{type(e).__name__}", False
+
+
 def cost_usd(model_id: str, input_tokens: int, output_tokens: int) -> Optional[float]:
     price = PRICES.get(model_id)
     if not price:
@@ -201,6 +221,20 @@ class VisionJudge:
                 max_retries=3,
                 timeout=60.0,
             )
+
+    def check(self) -> tuple[bool, str, bool]:
+        """Startup self-test: (ok, detail, is_config_error).
+        Claude API: free Models API lookup. Bedrock: a 1-token request (fractions of a cent)."""
+        try:
+            if self.provider == "anthropic":
+                m = self.client.with_options(max_retries=1).models.retrieve(self.model_id)
+                return True, f"{m.id} available", False
+            self.client.with_options(max_retries=1).messages.create(
+                model=self.model_id, max_tokens=1, messages=[{"role": "user", "content": "ping"}])
+            return True, f"{self.model_id} answered", False
+        except Exception as e:                         # noqa: BLE001 - classify everything
+            what, config_error = classify_error(e)
+            return False, f"{what}: {e}", config_error
 
     def assess(self, current: bytes, reference: Optional[bytes], context: str,
                expected: Optional[bytes] = None) -> Verdict:

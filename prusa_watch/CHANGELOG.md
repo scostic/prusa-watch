@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2
+- **AI provider self-check at startup**: a free Models API lookup (Claude API) or a 1-token request (Bedrock)
+  logs `AI provider check OK` or the exact problem (401 key, 403 access, 404 model), sends a `type=ai_check`
+  event, and emails you on configuration errors - so a bad key is found before a print, not during one.
+
 ## 0.8.1
 - Heartbeat events carry `provider` and `model`, so Splunk shows which model is active even between prints.
 - AI errors are logged as `AI call failed (<provider>:<model>)` with `component=ai` (previously always "Bedrock").

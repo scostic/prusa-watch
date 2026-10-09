@@ -203,6 +203,45 @@ class AgentTickTest(unittest.TestCase):
         self.assertEqual((beats[0]["provider"], beats[0]["model"]),
                          ("bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0"))
 
+    def test_no_ai_checks_while_preheating(self, grab, _thumb):
+        a = make_agent(blind_alert_min=3)
+        a.ha = mock.Mock()
+        a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
+        heating = PrinterStatus("PRINTING", job_id=87, progress=0.0, temp_nozzle=170.0, target_nozzle=250.0,
+                                temp_bed=44.0, target_bed=85.0)
+        with mock.patch.object(agent_mod.time, "time") as clock:
+            for minute in range(8):                                 # long preheat: no checks, no BLIND alert
+                clock.return_value = 1000.0 + minute * 60
+                a.printer.status.return_value = heating
+                a.tick()
+            a.judge.assess.assert_not_called()
+            grab.assert_not_called()
+            a.mailer.send.assert_not_called()
+            self.assertEqual((a.ha.publish.call_args.args[0], a.ha.publish.call_args.kwargs["phase"]),
+                             ("printing", "preheat"))
+            clock.return_value += 60
+            a.printer.status.return_value = PrinterStatus("PRINTING", job_id=87, progress=0.0,
+                                                          temp_nozzle=249.0, target_nozzle=250.0,
+                                                          temp_bed=84.0, target_bed=85.0)
+            a.tick()                                                # at temperature: checks start
+        a.judge.assess.assert_called_once()
+        self.assertFalse(a.preheating)
+
+    def test_preheat_rule(self, _grab, _thumb):
+        P = PrinterStatus
+        self.assertTrue(agent_mod.is_preheating(P("PRINTING", progress=0.0, temp_bed=40.0, target_bed=85.0)))
+        self.assertFalse(agent_mod.is_preheating(P("PRINTING", progress=0.0, temp_bed=82.0, target_bed=85.0)))
+        self.assertFalse(agent_mod.is_preheating(P("PRINTING", progress=5.0, temp_bed=40.0, target_bed=85.0)))
+        self.assertFalse(agent_mod.is_preheating(P("PRINTING", progress=0.0)))          # no telemetry
+        self.assertFalse(agent_mod.is_preheating(P("PRINTING", progress=0.0, temp_nozzle=25.0, target_nozzle=0.0)))
+
+    def test_preheat_skip_can_be_disabled(self, _grab, _thumb):
+        a = make_agent(skip_preheat=False)
+        a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=1, progress=0.0, temp_bed=40.0, target_bed=85.0)
+        a.tick()
+        a.judge.assess.assert_called_once()
+
     def test_ai_selfcheck_ok(self, _grab, _thumb):
         a = make_agent()
         a.judge.check.return_value = (True, "claude-haiku-5-5 available", False)

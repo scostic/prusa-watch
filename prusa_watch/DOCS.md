@@ -27,6 +27,7 @@ minute, sends it with PrusaLink telemetry to Claude Haiku 4.5 on Amazon Bedrock,
 | `failure_threshold`, `min_confidence` | consecutive confident failure verdicts before an email (3, 0.6) |
 | `confirm_failures` | re-check every failure on a second frame before it counts (on) |
 | `use_gcode_thumbnail` | also show the model the slicer preview of the object from the G-code (on) |
+| `skip_preheat` | no AI checks while heating up at 0% progress (on) |
 | `alert_cooldown_min` | minimum minutes between repeated failure emails (30) |
 | `notify_finished` | email when a print finishes (on) |
 | `auto_action`, `auto_action_threshold` | `none` / `pause` / `stop` after N consecutive failures (off by default) |

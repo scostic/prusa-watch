@@ -24,6 +24,19 @@ CONFIRM_DELAY_S = 4
 WEBUI_PORT = 8099          # must match ingress_port in config.yaml
 
 
+PREHEAT_MARGIN_C = 5
+
+
+def is_preheating(st: PrinterStatus) -> bool:
+    """Job started (progress 0) but nozzle or bed still more than PREHEAT_MARGIN_C below target."""
+    if st.progress not in (None, 0, 0.0):
+        return False
+    for temp, target in ((st.temp_nozzle, st.target_nozzle), (st.temp_bed, st.target_bed)):
+        if target and temp is not None and temp < target - PREHEAT_MARGIN_C:
+            return True
+    return False
+
+
 @dataclass
 class Frame:
     t: float
@@ -53,6 +66,7 @@ class Agent:
         self.last_good_check: Optional[float] = None
         self.blind_alerted = False
         self.printer_offline = False
+        self.preheating = False
         self.energy = EnergyMeter()
         self.power_w: Optional[float] = None
         self.dataset: Optional[Dataset] = None
@@ -385,10 +399,23 @@ class Agent:
             # After a pause/attention the scene may have changed (filament swap, user at the printer):
             # start fresh instead of comparing against a stale reference frame.
             self.history.clear()
-            self.printing_since, self.blind_alerted = None, False
+            self.printing_since, self.blind_alerted, self.preheating = None, False, False
             self.ha.publish(st.state.lower(), **self._ha_attrs(st))
             return
 
+        if self.cfg.skip_preheat and is_preheating(st):
+            # PRINTING also covers heating and bed levelling: nothing to see yet, so no AI call.
+            if not self.preheating:
+                log.info("Preheating (nozzle %s/%s, bed %s/%s) - AI checks start when at temperature",
+                         st.temp_nozzle, st.target_nozzle, st.temp_bed, st.target_bed)
+                self._event("state", st, previous_state=self.prev_state, phase="preheat")
+            self.preheating = True
+            self.printing_since = now                 # the blind timer starts after preheating
+            self.ha.publish("printing", phase="preheat", **self._ha_attrs(st))
+            return
+        if self.preheating:
+            self.preheating = False
+            log.info("At temperature - AI checks running")
         if self.printing_since is None:
             self.printing_since = now
         self._check_blind(st, now)

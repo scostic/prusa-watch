@@ -30,7 +30,8 @@ class Config:
     failure_threshold: int = 3
     min_confidence: float = 0.6
     confirm_failures: bool = True
-    use_gcode_thumbnail: bool = True   # show the model the slicer preview of the object being printed
+    use_gcode_thumbnail: bool = True
+    skip_preheat: bool = True          # no AI checks while heating up at 0% progress   # show the model the slicer preview of the object being printed
     alert_cooldown_min: int = 30
     notify_finished: bool = True
     auto_action: str = "none"

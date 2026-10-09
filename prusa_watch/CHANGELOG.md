@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.3
+- No AI checks while the printer heats up: PrusaLink reports PRINTING during preheat and bed levelling, so
+  checks now start once nozzle and bed are within 5 °C of target (or progress > 0). Saves calls and avoids
+  confused warnings; the BLIND timer starts after preheat. HA shows `printing` with `phase: preheat`.
+  Option `skip_preheat` (on).
+- Confirmed on a real print: Buddy firmware serves the G-code thumbnail as PNG at `/thumb/l/<storage>/<file>`.
+
 ## 0.8.2
 - **AI provider self-check at startup**: a free Models API lookup (Claude API) or a 1-token request (Bedrock)
   logs `AI provider check OK` or the exact problem (401 key, 403 access, 404 model), sends a `type=ai_check`

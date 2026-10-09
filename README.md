@@ -45,6 +45,9 @@ flowchart LR
   camera unreachable, and "print finished" with a final photo.
 - **Watching the watchdog:** a CloudWatch heartbeat alarm emails you if the add-on, the Pi or your internet
   goes silent; the add-on itself emails you if a print runs with no successful AI check for 10 minutes.
+- **Only checks when there is something to see:** no AI calls while the printer heats up and levels the bed.
+- **Self-check at startup:** the AI provider (key, model access) is verified when the add-on starts, so a
+  wrong key is reported before a print, not during one.
 - **Optional automatic pause/stop** via PrusaLink (off by default).
 - **Energy and cost per print** from any smart plug with a power sensor (`power_entity`), plus an example
   automation that switches the plug off after the print once the hotend has cooled
@@ -172,7 +175,7 @@ built-in *TP-Link Smart Home* integration).
 
 `sensor.prusa_watch` - state is the latest verdict while printing (`ok`, `warning`, `failure`,
 `camera_problem`) and otherwise the printer state (`idle`, `paused`, `attention`, `finished`, `offline`,
-`camera_error`, `analysis_error`).
+`camera_error`, `analysis_error`); `printing` with `phase: preheat` while the printer heats up.
 
 | Attribute | |
 |---|---|
@@ -188,7 +191,8 @@ Plus `/share/prusa_watch/latest.jpg` (latest frame) and `flagged-*.jpg` (warning
 | Possible failure / PAUSED / STOPPED | 3 consecutive confirmed failure verdicts (cooldown 30 min) |
 | Printer needs attention | PrusaLink reports `ERROR` or `ATTENTION` (runout, thermal, fan) |
 | Camera unreachable | 5 failed frame grabs in a row during a print |
-| Watchdog is BLIND | printing, but no successful AI check for 10 minutes |
+| Watchdog is BLIND | printing, but no successful AI check for 10 minutes (timer starts after preheat) |
+| AI provider not working | the startup self-check fails: wrong API key, no model access, unknown model |
 | Print finished | with the final photo and, with a plug, energy and cost |
 | CloudWatch ALARM / OK (SNS) | the add-on's heartbeat stopped / came back |
 
@@ -220,6 +224,19 @@ python -m unittest discover -s tests
 `--dry-run` never emails and never touches the printer. Needs `ffmpeg` on `PATH`.
 `eval/replay.py` replays saved frames through two prompt versions and prints a comparison.
 
+## Troubleshooting
+
+| Log line / symptom | What to do |
+|---|---|
+| `AI provider check FAILED (...): invalid API key / credentials (401)` | paste the API key again (Claude API key, or the AWS key for Bedrock) |
+| `... no access to this model (403)` / `model not found (404)` | check the model id and that your account/workspace can use it |
+| `PrusaLink unreachable: 401` | wrong `prusalink_api_key` (or use `prusalink_password` with user `maker`) |
+| `Camera grab failed` | enable RTSP in Prusa Connect (*Camera → Streaming = RTSP*), restart the camera |
+| `Job N has no G-code thumbnail` | enable thumbnails in PrusaSlicer (*Printer Settings → G-code thumbnails*, e.g. `440x240/QOI`) |
+| Image upside down / sideways | `camera_rotate: 180` (or 90/270) |
+| Home Assistant: "Local and store versions differ" | *Check for updates*, refresh, then **Update** (not Rebuild) |
+| Tapo plug: "Unsupported device ... TPAP" | Tapo app → Third-Party Compatibility off/on, wait 30 s, add again |
+
 ## Safety
 
 Prusa Watch is a convenience monitor, **not a safety device**. It can miss failures and it can raise false
@@ -227,7 +244,8 @@ alarms. Keep `auto_action: none` until you have watched several prints and teste
 never leave a printer unattended where that would be unsafe.
 
 ## Roadmap ideas
-- Crop to the bed region, first-layer check, stronger model only for confirmation.
+- Start checks at a minimum progress (skip bed levelling), crop to the bed region, first-layer check.
+- Better pictures at night: an LED strip on the printer's GPIO board, switched from start/end G-code.
 - Home Assistant actionable notifications (pause from your phone).
 - Timelapse per print from the saved frames.
 - A small collection of real failure frames to measure detection, not just false alarms.

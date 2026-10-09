@@ -1,14 +1,18 @@
 # Prusa Watch
 
 AI watchdog for a Prusa printer with a Buddy3D camera. While a print runs it grabs a camera frame every
-minute, sends it with PrusaLink telemetry to Claude Haiku 4.5 on Amazon Bedrock, and emails you
-(Amazon SES) when the print fails. Full guide: https://github.com/scostic/prusa-watch
+minute, sends it with PrusaLink telemetry and the G-code thumbnail to Claude (Haiku 5.5 via the Claude API,
+or Haiku 4.5 on Amazon Bedrock), and emails you (Amazon SES) when the print fails. Full guide: https://github.com/scostic/prusa-watch
 
 ## Before you start
 - PrusaLink enabled on the printer (API key from *Settings → Network → PrusaLink*).
 - Camera RTSP enabled: Prusa Connect → printer → *Camera* → *Streaming* = **RTSP**
   (stream at `rtsp://<camera-ip>/live`).
-- An AWS IAM user with the policy from `aws/iam-policy.json` (Bedrock Claude Haiku 4.5 + SES send).
+- A Claude API key (console.anthropic.com, recommended) *or* Bedrock access to Claude Haiku 4.5.
+- An AWS IAM user with the policy from `aws/iam-policy.json` (SES send, CloudWatch heartbeat, and Bedrock if used).
+
+At every start the add-on checks the AI provider (free for the Claude API) and logs
+`AI provider check OK` - or the exact problem and emails you, so a wrong key is found before a print.
 
 ## Options
 
@@ -37,14 +41,16 @@ minute, sends it with PrusaLink telemetry to Claude Haiku 4.5 on Amazon Bedrock,
 
 ## Outputs
 - `sensor.prusa_watch`: state = latest verdict while printing (`ok` / `warning` / `failure` /
-  `camera_problem`), otherwise the printer state (`idle`, `paused`, `attention`, `finished`, `offline`...).
+  `camera_problem`), otherwise the printer state (`idle`, `paused`, `attention`, `finished`, `offline`...);
+  `printing` with `phase: preheat` while heating up (no AI checks yet).
   Attributes: `issue`, `confidence`, `description`, `part_visible`, `streak`, `last_check`, `printer_state`,
   `job_id`, `progress`, `time_remaining`, `axis_z`, `temp_nozzle`, `target_nozzle`, `temp_bed`, `target_bed`,
   and with a smart plug `power_w`, `print_energy_kwh`, `print_energy_cost`.
 - `/share/prusa_watch/latest.jpg` and `flagged-*.jpg` for warnings/failures.
-- Emails: possible failure, printer attention, camera unreachable, watchdog blind, print finished
-  (with energy and cost when `power_entity` is set).
-- Optional Splunk events (`type` = `check`, `state`, `email`, `error`, `heartbeat`, `energy`).
+- Emails: possible failure, printer attention, camera unreachable, watchdog blind, AI provider not working,
+  print finished (with energy and cost when `power_entity` is set).
+- Optional Splunk events (`type` = `check`, `state`, `email`, `error`, `heartbeat`, `energy`, `ai_check`,
+  `label`). Checks carry `provider`, `model`, tokens, latency and `cost_usd`.
 
 ## Labelling (test set)
 Open **Prusa Watch** in the Home Assistant sidebar to label saved checks as ✅ OK print or ❌ Real failure.

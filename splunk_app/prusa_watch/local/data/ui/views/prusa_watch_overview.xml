@@ -1,9 +1,26 @@
 <form version="1.1" theme="light">
   <label>Prusa Watch - Overview</label>
-  <description>AI watchdog for the Prusa MK3.5S: verdicts, alerts, printer telemetry and Bedrock cost.</description>
+  <description>AI watchdog for the Prusa MK3.5S: verdicts, alerts, printer telemetry, AI model, cost and energy.</description>
+  <!-- cost_usd is read from the raw event (what the add-on calculated per model, 0.8.0+); older events
+       fall back to Claude Haiku 4.5 on Bedrock EU prices. Works with old and new props.conf. -->
   <search id="base">
     <query>index=prusa_watch sourcetype="prusa:watch" $job_filter$
-| fields _time type job_id state previous_state progress axis_z temp_nozzle target_nozzle temp_bed target_bed fan_hotend fan_print status issue confidence description part_visible evidence downgraded confirm_status streak action subject sent error change_pct latency_ms input_tokens output_tokens cost_usd</query>
+| rex field=_raw "\"cost_usd\":\s*(?&lt;cost_raw&gt;[0-9.eE-]+)"
+| eval cost_usd=coalesce(cost_raw, if(isnotnull(input_tokens), round(input_tokens*1.10/1000000 + output_tokens*5.50/1000000, 6), null()))
+| fields _time type job_id state previous_state phase progress axis_z temp_nozzle target_nozzle temp_bed target_bed fan_hotend fan_print status issue confidence description part_visible evidence downgraded confirm_status streak action subject sent error component change_pct latency_ms input_tokens output_tokens cost_usd provider model has_expected</query>
+    <earliest>$time.earliest$</earliest>
+    <latest>$time.latest$</latest>
+  </search>
+  <!-- energy events carry no job_id (the printer releases the job at FINISHED): attach them to the
+       preceding job by time -->
+  <search id="jobs_energy">
+    <query>index=prusa_watch sourcetype="prusa:watch" type IN (check, energy)
+| sort 0 _time
+| eval jid=job_id
+| filldown jid
+| search type=energy
+| stats latest(print_energy_kwh) as kwh latest(print_energy_cost) as energy_cost by jid
+| rename jid as job_id</query>
     <earliest>$time.earliest$</earliest>
     <latest>$time.latest$</latest>
   </search>
@@ -49,6 +66,44 @@
       </single>
     </panel>
     <panel>
+      <title>AI model in use</title>
+      <single>
+        <search>
+          <query>index=prusa_watch sourcetype="prusa:watch" type=heartbeat model=* | head 1 | eval model=provider.": ".model | fields model</query>
+          <earliest>-7d</earliest>
+          <latest>now</latest>
+          <refresh>5m</refresh>
+        </search>
+        <option name="underLabel">from the latest heartbeat</option>
+      </single>
+    </panel>
+    <panel>
+      <title>AI self-check (last start)</title>
+      <single>
+        <search>
+          <query>index=prusa_watch sourcetype="prusa:watch" type=ai_check | head 1 | eval result=if(ok="true", "OK", "FAILED"), when=strftime(_time, "%d %b %H:%M") | fields result</query>
+          <earliest>-30d</earliest>
+          <latest>now</latest>
+          <refresh>5m</refresh>
+        </search>
+        <option name="underLabel">key and model access at add-on start</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Add-on version</title>
+      <single>
+        <search>
+          <query>index=prusa_watch sourcetype="prusa:watch" type=heartbeat version=* | head 1 | fields version</query>
+          <earliest>-7d</earliest>
+          <latest>now</latest>
+          <refresh>5m</refresh>
+        </search>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
       <title>Checks</title>
       <single>
         <search base="base"><query>search type=check | stats count</query></search>
@@ -80,11 +135,29 @@
       </single>
     </panel>
     <panel>
-      <title>Bedrock cost (est.)</title>
+      <title>AI cost</title>
       <single>
         <search base="base"><query>search type=check | stats sum(cost_usd) as usd | eval usd=round(usd,3)</query></search>
         <option name="unit">$</option>
         <option name="unitPosition">before</option>
+        <option name="underLabel">USD, all models</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Printer energy</title>
+      <single>
+        <search base="jobs_energy"><query>stats sum(kwh) as kwh | eval kwh=round(kwh,2)</query></search>
+        <option name="unit">kWh</option>
+        <option name="underLabel">finished prints in range</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Electricity cost</title>
+      <single>
+        <search base="jobs_energy"><query>stats sum(energy_cost) as cost | eval cost=round(cost,2)</query></search>
+        <option name="unit">€</option>
+        <option name="unitPosition">before</option>
+        <option name="underLabel">finished prints in range</option>
       </single>
     </panel>
   </row>
@@ -136,8 +209,18 @@
     <panel>
       <title>Model confidence and frame change</title>
       <chart>
-        <search base="base"><query>search type=check | eval confidence_pct=confidence*100 | timechart span=2m avg(confidence_pct) as confidence_pct avg(change_pct) as frame_change_pct max(streak) as failure_streak</query></search>
+        <search base="base"><query>search type=check | eval confidence_pct=confidence*100 | timechart span=5m avg(confidence_pct) as confidence_pct avg(change_pct) as frame_change_pct max(streak) as failure_streak</query></search>
         <option name="charting.chart">line</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>How much of the part the model can see</title>
+      <chart>
+        <search base="base"><query>search type=check part_visible=* | timechart span=10m count by part_visible</query></search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked100</option>
+        <option name="charting.fieldColors">{"fully":0x53A051,"partly":0x5A9BD5,"hidden":0x708794}</option>
         <option name="charting.legend.placement">bottom</option>
       </chart>
     </panel>
@@ -150,7 +233,7 @@
         <search base="base"><query>search (type=check status!=ok) OR type=email OR type=error OR (type=state state IN ("ERROR","ATTENTION","FINISHED","STOPPED"))
 | eval detail=coalesce(description, subject, error, "state ".previous_state." -> ".state)
 | eval confidence=if(isnotnull(confidence), round(confidence*100)."%", null())
-| table _time type job_id progress status issue confidence part_visible confirm_status downgraded streak action detail
+| table _time type job_id progress status issue confidence part_visible confirm_status downgraded streak action model detail
 | sort - _time</query></search>
         <option name="count">15</option>
         <option name="drilldown">none</option>
@@ -167,19 +250,73 @@
       <table>
         <search>
           <query>index=prusa_watch sourcetype="prusa:watch" type=check job_id=*
-| stats min(_time) as start max(_time) as last_seen max(progress) as progress count as checks
-        count(eval(status="failure")) as failures count(eval(status="warning")) as warnings
-        sum(cost_usd) as cost_usd by job_id
-| eval start=strftime(start,"%Y-%m-%d %H:%M"), last_seen=strftime(last_seen,"%Y-%m-%d %H:%M"), cost_usd=round(cost_usd,3)
+| rex field=_raw "\"cost_usd\":\s*(?&lt;cost_raw&gt;[0-9.eE-]+)"
+| eval cost_usd=coalesce(cost_raw, round(input_tokens*1.10/1000000 + output_tokens*5.50/1000000, 6))
+| stats min(_time) as start max(_time) as last_check max(progress) as progress count as checks
+        count(eval(status="warning")) as warnings count(eval(status="failure")) as failures
+        sum(cost_usd) as ai_usd latest(model) as model by job_id
+| join type=left job_id
+    [search index=prusa_watch sourcetype="prusa:watch" type IN (check, energy)
+     | sort 0 _time | eval jid=job_id | filldown jid | search type=energy
+     | stats latest(print_energy_kwh) as kwh latest(print_energy_cost) as energy_eur by jid
+     | rename jid as job_id]
+| eval duration=tostring(last_check-start, "duration"), start=strftime(start,"%Y-%m-%d %H:%M"),
+       ai_usd=round(ai_usd,3), model=replace(model, "^eu\.anthropic\.", "bedrock: ")
+| table job_id start duration progress checks warnings failures model ai_usd kwh energy_eur
 | sort - start</query>
           <earliest>$time.earliest$</earliest>
           <latest>$time.latest$</latest>
         </search>
         <option name="drilldown">none</option>
+        <option name="count">10</option>
       </table>
     </panel>
+  </row>
+
+  <row>
     <panel>
-      <title>Bedrock latency and tokens</title>
+      <title>AI models compared</title>
+      <table>
+        <search>
+          <query>index=prusa_watch sourcetype="prusa:watch" type=check
+| rex field=_raw "\"cost_usd\":\s*(?&lt;cost_raw&gt;[0-9.eE-]+)"
+| eval cost_usd=coalesce(cost_raw, round(input_tokens*1.10/1000000 + output_tokens*5.50/1000000, 6))
+| stats count as checks avg(cost_usd) as usd_per_check sum(cost_usd) as usd_total avg(latency_ms) as latency_ms
+        avg(input_tokens) as tokens_in count(eval(status!="ok")) as non_ok count(eval(has_expected="true")) as with_thumbnail
+        min(_time) as first_used max(_time) as last_used by model
+| eval usd_per_check=round(usd_per_check,5), usd_per_print_hour=round(usd_per_check*60,3), usd_total=round(usd_total,3),
+       latency_ms=round(latency_ms), tokens_in=round(tokens_in), non_ok_pct=round(non_ok/checks*100,1),
+       thumbnail_pct=round(with_thumbnail/checks*100), first_used=strftime(first_used,"%Y-%m-%d"), last_used=strftime(last_used,"%Y-%m-%d")
+| table model checks usd_per_check usd_per_print_hour usd_total latency_ms tokens_in non_ok_pct thumbnail_pct first_used last_used
+| sort - last_used</query>
+          <earliest>-90d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>AI cost per day by model</title>
+      <chart>
+        <search>
+          <query>index=prusa_watch sourcetype="prusa:watch" type=check
+| rex field=_raw "\"cost_usd\":\s*(?&lt;cost_raw&gt;[0-9.eE-]+)"
+| eval cost_usd=coalesce(cost_raw, round(input_tokens*1.10/1000000 + output_tokens*5.50/1000000, 6))
+| timechart span=1d sum(cost_usd) by model</query>
+          <earliest>-30d@d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleY.text">USD</option>
+        <option name="charting.legend.placement">bottom</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>AI latency and input tokens</title>
       <chart>
         <search base="base"><query>search type=check | timechart span=10m avg(latency_ms) as latency_ms avg(input_tokens) as input_tokens</query></search>
         <option name="charting.chart">line</option>

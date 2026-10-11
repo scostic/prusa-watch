@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.4
+- Fix: the `energy` event at the end of a print now carries the `job_id` of the print (PrusaLink reports no
+  job id once the job is FINISHED), so energy and cost can be matched to their print.
+
 ## 0.8.3
 - No AI checks while the printer heats up: PrusaLink reports PRINTING during preheat and bed levelling, so
   checks now start once nozzle and bed are within 5 °C of target (or progress > 0). Saves calls and avoids

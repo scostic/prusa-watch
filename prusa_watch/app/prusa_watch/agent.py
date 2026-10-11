@@ -389,7 +389,9 @@ class Agent:
                                                     "(e.g. filament runout, thermal or fan error)."), jpeg)
         elif changed and st.state == "FINISHED" and self.prev_state == "PRINTING":
             if self.energy.samples:
-                self._event("energy", st, **self._energy_fields())
+                # PrusaLink often reports no job id once the job is FINISHED: use the job we watched.
+                self._event("energy", st, **self._energy_fields(),
+                            job_id=st.job_id if st.job_id is not None else self.watchdog.job_id)
             if self.cfg.notify_finished:
                 self._email("[Prusa Watch] Print finished",
                             self._status_body(st, extra=self._energy_line()), self._grab())

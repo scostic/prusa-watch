@@ -148,6 +148,23 @@ class AgentTickTest(unittest.TestCase):
         energy = [c.args[0] for c in a.hec.send.call_args_list if c.args[0]["type"] == "energy"]
         self.assertEqual(energy[0]["print_energy_cost"], 0.034)
 
+    def test_energy_event_keeps_job_id_when_finished_has_none(self, _grab, _thumb):
+        a = make_agent(power_entity="sensor.plug_power", energy_price=0.2)
+        a.ha = mock.Mock()
+        a.ha.read_number.return_value = 150.0
+        a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
+        with mock.patch.object(agent_mod.time, "time") as clock:
+            for minute in range(3):
+                clock.return_value = 1000.0 + minute * 60
+                a.printer.status.return_value = PrinterStatus("PRINTING", job_id=90)
+                a.tick()
+            clock.return_value += 60
+            a.printer.status.return_value = PrinterStatus("FINISHED", job_id=None)   # what PrusaLink does
+            a.tick()
+        energy = [c.args[0] for c in a.hec.send.call_args_list if c.args[0]["type"] == "energy"]
+        self.assertEqual(len(energy), 1)
+        self.assertEqual(energy[0]["job_id"], 90)
+
     def test_no_power_entity_no_energy(self, _grab, _thumb):
         a = make_agent()
         a.ha = mock.Mock()

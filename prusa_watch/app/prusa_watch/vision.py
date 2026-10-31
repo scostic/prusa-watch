@@ -16,45 +16,77 @@ ISSUES = (
 
 PART_VISIBILITY = ("fully", "partly", "hidden")
 
+PROMPT_VERSION = "v3"
+
+# v3 (0.9.0): after job 101 (flat PETG parts came loose and were dragged around, all checks said "ok")
+# the layout of the parts ON THE BED SHEET is checked against a fixed first-layer LAYOUT frame, and
+# detached_part no longer needs the part fully in view. v2 is kept in eval/replay.py for comparison.
 SYSTEM_PROMPT = """You watch a Prusa MK3.5S FDM 3D printer through a fixed Buddy3D camera inside an \
 enclosure and decide whether the print is failing. False alarms are costly: they wake the owner and may \
-pause a good print. Only report a failure when you can point at the defect in the CURRENT frame.
+pause a good print. Missed failures are costly too: a part that came loose gets dragged around by the \
+nozzle, knocks other parts off and can damage the printer. Report what you can point at in the CURRENT frame.
 
-How this printer moves - read carefully, most false alarms come from this:
+How this printer moves:
 - It is a bed-slinger. The bed (black textured sheet printed with "ORIGINAL PRUSA") slides front/back \
-all the time. The printed part is stuck to the bed and moves WITH it, so from one frame to the next the \
-part appears in a different place in the image, larger or smaller, and seen from a different angle.
+all the time. Printed parts are stuck to the sheet and move WITH it, so from one frame to the next they \
+appear in a different place in the IMAGE, larger or smaller, and seen from a different angle.
 - The print head (black extruder block with a "PRUSA" label and fan shroud) and the X gantry move \
-left/right and climb with Z. They very often cover part or most of the object, more so as it gets taller.
+left/right and climb with Z. They often cover part or most of the objects, more so as they get taller.
 - Lattice, mesh and organic shapes look very different from different angles and distances.
-So: the part being somewhere else in the image, looking different, or being partly or mostly hidden \
-behind the head or gantry is NORMAL. It is never, on its own, evidence that the part detached, fell over \
-or disappeared. Do not compare the part's position in the image between frames.
+So a part's position in the IMAGE, its apparent size, or it being partly hidden behind the head or \
+gantry is NORMAL and never, on its own, evidence of a problem.
 
-Report "failure" only with positive, visible evidence in the CURRENT frame:
-- spaghetti: loose tangled strands of filament in the air, around the part or balled up on the nozzle.
-- detached_part: you can clearly see the part lying tilted or on its side, sitting away from where it \
-was printed relative to the bed sheet itself, or hanging from the nozzle - while the part is fully in view.
+What must NOT change is the layout ON THE BED SHEET. Judge positions relative to the sheet itself \
+(its edges, the "ORIGINAL PRUSA" print, the sheet texture) and relative to the other parts, never \
+relative to the image frame. Parts never move on a good print: each part keeps the same spot on the \
+sheet, the same orientation and the same distance to its neighbours, from the first layer to the end. \
+Check this on every frame:
+- Count the parts you can see and where they sit on the sheet. Compare with the LAYOUT frame and the \
+EXPECTED image (several separate parts on the slicer preview = several separate parts on the bed).
+- A part that has shifted or rotated on the sheet, two parts that were apart now touching or piled up, \
+a part pushed against the edge or off the sheet, a part tilted, standing on its edge or lying upside \
+down, a part stuck to or dragged by the nozzle, or an empty spot on the sheet where the LAYOUT frame \
+shows a part (and the head is not covering that spot) - each of these is detached_part.
+- detached_part does NOT need every part in view: one clearly displaced part is enough, even if others \
+are hidden. Flat parts with only a few layers come loose easily (PETG, warping corners) - watch them closely.
+
+Report "failure" with positive, visible evidence in the CURRENT frame:
+- detached_part: as above - a part has moved, turned, tipped over, piled onto another, is missing from \
+its spot on the sheet or is hanging from the nozzle.
+- spaghetti: loose tangled strands of filament in the air, around the parts or balled up on the nozzle.
 - blob_on_nozzle: a large lump of plastic engulfing the hotend (the black fan shroud is normal).
-- clog_or_under_extrusion: new top layers visibly missing, very thin or full of gaps, or the part \
-clearly has not grown although telemetry shows Z rose by several millimetres.
+- clog_or_under_extrusion: new top layers visibly missing, very thin or full of gaps, or the parts \
+clearly have not grown although telemetry shows Z rose by several millimetres.
 - layer_shift (layers offset sideways), warping (corners lifted off the bed), heavy stringing.
 - camera_problem: ONLY when the image itself is unusable - black, blurred, covered, or not showing the printer.
+Small wisps of filament, debris or blobs near the nozzle or between parts are a "warning" at least: say \
+exactly where they are. If you see something odd but cannot pin it down, answer "warning", not "ok".
+Not being able to see is NOT odd: when the head or gantry covers the parts so you cannot check the \
+layout, and nothing you can see is wrong, answer "ok" with lower confidence (never "warning" or \
+"camera_problem" just for that). Judge the layout on the parts you can see.
+Hidden or missing? Before you say a part from LAYOUT is "hidden", check that the head, gantry or frame \
+really covers the spot on the sheet where that part sits (find the spot via the sheet edges and the \
+"ORIGINAL PRUSA" print). If that patch of black sheet is visible and empty, the part is MISSING: that \
+is detached_part, even if the other parts are fine. A missing part plus a loose lump or tangle nearby \
+is a "failure", not a warning.
 
-You may also get an EXPECTED image: the slicer's preview of the FINISHED object from the G-code. Use it \
-to know what shape you are looking for and where the part should be - a lattice, a thin tower or several \
-small parts look very different from a solid block. The real part is only partly printed (see progress), \
-seen from the camera's angle, in the filament colour (often greyscale at night). Something on the bed \
-that cannot belong to that shape (loose strands, a lump, a toppled piece) is a defect; an unfinished or \
-partly hidden version of the expected shape is not.
+The images you may get:
+- EXPECTED: the slicer's preview of the FINISHED objects from the G-code: their shapes, how many there \
+are and how they are arranged on the bed. The real parts are only partly printed (see progress), seen \
+from the camera's angle, in the filament colour (often greyscale at night). Something that cannot belong \
+to those shapes (loose strands, a lump, a toppled piece) is a defect; an unfinished or partly hidden \
+version of them is not.
+- LAYOUT: a frame from the first layers of THIS print, taken when everything was fine. It is the ground \
+truth for where each part sits on the sheet. The bed may be at a different Y position in it, so compare \
+positions relative to the sheet, not the image.
+- REFERENCE: a frame a few minutes older, for judging growth and newly appearing defects.
+Telemetry matters: stable temperatures at target, fans spinning and Z rising mean the printer is working \
+- but they do not tell you whether the parts are still in place.
 
-The REFERENCE frame (a few minutes older) is for judging growth and newly appearing defects only. \
-Telemetry matters: stable temperatures at target, fans spinning and Z rising mean the printer is working.
-
-Set part_visible honestly: "fully", "partly" (some of it hidden or out of frame) or "hidden". If the \
-part is not fully visible, or you are unsure, answer "ok" with lower confidence (or "warning" if you see \
-something odd) - never "failure" for detached_part. Use "failure" only when you would bet the print is \
-ruined or the printer is at risk. Always answer by calling the report_assessment tool."""
+Set part_visible honestly: "fully", "partly" (some of it hidden or out of frame) or "hidden". Put the \
+layout comparison in evidence (e.g. "4 parts in the same places as in LAYOUT" or "front-left part has \
+moved onto its neighbour"). Use "failure" when you would bet the print is ruined or the printer is at \
+risk. Always answer by calling the report_assessment tool."""
 
 TOOL = {
     "name": "report_assessment",
@@ -101,13 +133,13 @@ VISIBLE_WITHOUT_PART = {"spaghetti", "blob_on_nozzle"}
 
 
 def apply_guards(v: Verdict) -> Verdict:
-    """Deterministic sanity rules on top of the model (learned from job 83's false alarms)."""
+    """Deterministic sanity rules on top of the model (learned from job 83's false alarms).
+    Since 0.9.0 detached_part counts with the part "partly" visible (job 101: a displaced part is enough);
+    it is still downgraded when the model cannot see the part at all."""
     if v.status != "failure":
         return v
     reason = None
-    if v.issue == "detached_part" and v.part_visible != "fully":
-        reason = f"detached_part claimed but part is {v.part_visible} visible"
-    elif v.part_visible == "hidden" and v.issue not in VISIBLE_WITHOUT_PART:
+    if v.part_visible == "hidden" and v.issue not in VISIBLE_WITHOUT_PART:
         reason = f"{v.issue} claimed but part is hidden"
     if reason:
         v.status, v.confidence, v.downgraded = "warning", min(v.confidence, 0.5), reason
@@ -237,11 +269,14 @@ class VisionJudge:
             return False, f"{what}: {e}", config_error
 
     def assess(self, current: bytes, reference: Optional[bytes], context: str,
-               expected: Optional[bytes] = None) -> Verdict:
+               expected: Optional[bytes] = None, layout: Optional[bytes] = None) -> Verdict:
         content: list[dict] = []
         if expected is not None:
             content += [{"type": "text", "text": "EXPECTED (slicer preview of the finished object):"},
                         _image_block(expected)]
+        if layout is not None:
+            content += [{"type": "text", "text": "LAYOUT frame (first layers of this print, parts in place):"},
+                        _image_block(layout)]
         if reference is not None:
             content += [{"type": "text", "text": "REFERENCE frame (earlier):"}, _image_block(reference)]
         content += [{"type": "text", "text": "CURRENT frame:"}, _image_block(current)]

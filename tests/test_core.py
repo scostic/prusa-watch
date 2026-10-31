@@ -17,6 +17,7 @@ FAIL = Verdict("failure", "spaghetti", 0.9, "tangle")
 WEAK = Verdict("failure", "spaghetti", 0.3, "maybe")
 OK = Verdict("ok", "none", 0.95, "fine")
 WARN = Verdict("warning", "stringing", 0.6, "hmm")
+CAM = Verdict("camera_problem", "camera_problem", 0.9, "dark")
 
 
 class WatchdogTest(unittest.TestCase):
@@ -50,6 +51,22 @@ class WatchdogTest(unittest.TestCase):
         self.assertTrue(w.observe(FAIL, 0).alert)
         d = w.observe(FAIL, 1)
         self.assertEqual((d.alert, d.action), (True, "stop"))
+
+    def test_warning_streak_alerts_without_action(self):
+        w = Watchdog(3, 0.6, cooldown_s=600, auto_action="pause", auto_action_threshold=4, warning_threshold=3)
+        d = [w.observe(v, t) for t, v in enumerate((WARN, WEAK, CAM, WARN))]
+        self.assertEqual([x.alert for x in d], [False, False, False, True])     # camera_problem neither builds nor clears
+        self.assertEqual((d[-1].reason, d[-1].action, w.streak), ("warnings", None, 0))
+        self.assertFalse(w.observe(WARN, 5).alert)                             # cooldown
+        w.observe(OK, 6)
+        self.assertEqual(w.warn_streak, 0)
+
+    def test_warning_streak_off_and_failures_win(self):
+        w = Watchdog(3, 0.6, cooldown_s=0)
+        self.assertFalse(any(w.observe(WARN, t).alert for t in range(10)))     # warning_threshold 0 = off
+        w = Watchdog(3, 0.6, cooldown_s=0, warning_threshold=3)
+        d = [w.observe(FAIL, t) for t in range(3)]
+        self.assertEqual(d[-1].reason, "failures")
 
     def test_no_action_when_disabled(self):
         w = Watchdog(1, 0.6, cooldown_s=0)
@@ -90,10 +107,11 @@ class ParseTest(unittest.TestCase):
                     "description": "gone", "evidence": "x"}
             base.update(kw)
             return [SimpleNamespace(type="tool_use", name="report_assessment", input=base)]
-        v = parse_verdict(tool(part_visible="partly"))
-        self.assertEqual((v.status, v.confidence), ("warning", 0.5))
-        self.assertIn("partly", v.downgraded)
+        self.assertEqual(parse_verdict(tool(part_visible="partly")).status, "failure")   # since 0.9.0 (job 101)
         self.assertEqual(parse_verdict(tool(part_visible="fully")).status, "failure")
+        v = parse_verdict(tool(part_visible="hidden"))
+        self.assertEqual((v.status, v.confidence), ("warning", 0.5))
+        self.assertIn("hidden", v.downgraded)
         self.assertEqual(parse_verdict(tool(part_visible="hidden", issue="layer_shift")).status, "warning")
         self.assertEqual(parse_verdict(tool(part_visible="hidden", issue="spaghetti")).status, "failure")
 

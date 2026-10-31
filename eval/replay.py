@@ -1,15 +1,16 @@
-"""Replay frames through prompt versions and measure them.
+r"""Replay frames through prompt versions and measure them.
 
 Labelled dataset (recommended) - samples saved by the add-on and labelled in the HA "Prusa Watch" panel:
     copy \\<ha>\share\prusa_watch\dataset to eval/dataset, then
-    python eval/replay.py --dataset eval/dataset --variants recorded,v2
+    python eval/replay.py --dataset eval/dataset --variants recorded,v2,v3
   `recorded` re-scores what the live model said at the time (free, no API calls);
-  `v2` (current prompt, with the G-code thumbnail when the sample has one), `v2-noexp` (same without the
-  thumbnail - measures its value) and `v1` (original prompt) re-run Bedrock on the saved frames + context.
+  `v3` (current prompt 0.9.0: bed layout check, LAYOUT frame when the sample has one, relaxed guard),
+  `v2` (0.3.0-0.8.x prompt and guard, with the G-code thumbnail), `v2-noexp` (same without the
+  thumbnail) and `v1` (original prompt) re-run the model on the saved frames + context.
   Reports a confusion matrix, recall (failures caught), precision and false-alarm rate.
 
 Legacy mode - a folder of flagged-*.jpg frames from a print that went fine (every non-ok = false alarm):
-    python eval/replay.py eval/job83 --variants v1,v2
+    python eval/replay.py eval/job83 --variants v2,v3
 
 PYTHONPATH=prusa_watch/app and a config.local.json with AWS credentials are needed for v1/v2.
 """
@@ -68,13 +69,71 @@ V1_TOOL = {
     },
 }
 
+V2_PROMPT = """You watch a Prusa MK3.5S FDM 3D printer through a fixed Buddy3D camera inside an \
+enclosure and decide whether the print is failing. False alarms are costly: they wake the owner and may \
+pause a good print. Only report a failure when you can point at the defect in the CURRENT frame.
+
+How this printer moves - read carefully, most false alarms come from this:
+- It is a bed-slinger. The bed (black textured sheet printed with "ORIGINAL PRUSA") slides front/back \
+all the time. The printed part is stuck to the bed and moves WITH it, so from one frame to the next the \
+part appears in a different place in the image, larger or smaller, and seen from a different angle.
+- The print head (black extruder block with a "PRUSA" label and fan shroud) and the X gantry move \
+left/right and climb with Z. They very often cover part or most of the object, more so as it gets taller.
+- Lattice, mesh and organic shapes look very different from different angles and distances.
+So: the part being somewhere else in the image, looking different, or being partly or mostly hidden \
+behind the head or gantry is NORMAL. It is never, on its own, evidence that the part detached, fell over \
+or disappeared. Do not compare the part's position in the image between frames.
+
+Report "failure" only with positive, visible evidence in the CURRENT frame:
+- spaghetti: loose tangled strands of filament in the air, around the part or balled up on the nozzle.
+- detached_part: you can clearly see the part lying tilted or on its side, sitting away from where it \
+was printed relative to the bed sheet itself, or hanging from the nozzle - while the part is fully in view.
+- blob_on_nozzle: a large lump of plastic engulfing the hotend (the black fan shroud is normal).
+- clog_or_under_extrusion: new top layers visibly missing, very thin or full of gaps, or the part \
+clearly has not grown although telemetry shows Z rose by several millimetres.
+- layer_shift (layers offset sideways), warping (corners lifted off the bed), heavy stringing.
+- camera_problem: ONLY when the image itself is unusable - black, blurred, covered, or not showing the printer.
+
+You may also get an EXPECTED image: the slicer's preview of the FINISHED object from the G-code. Use it \
+to know what shape you are looking for and where the part should be - a lattice, a thin tower or several \
+small parts look very different from a solid block. The real part is only partly printed (see progress), \
+seen from the camera's angle, in the filament colour (often greyscale at night). Something on the bed \
+that cannot belong to that shape (loose strands, a lump, a toppled piece) is a defect; an unfinished or \
+partly hidden version of the expected shape is not.
+
+The REFERENCE frame (a few minutes older) is for judging growth and newly appearing defects only. \
+Telemetry matters: stable temperatures at target, fans spinning and Z rising mean the printer is working.
+
+Set part_visible honestly: "fully", "partly" (some of it hidden or out of frame) or "hidden". If the \
+part is not fully visible, or you are unsure, answer "ok" with lower confidence (or "warning" if you see \
+something odd) - never "failure" for detached_part. Use "failure" only when you would bet the print is \
+ruined or the printer is at risk. Always answer by calling the report_assessment tool."""
+
+API_VARIANTS = ("v1", "v2", "v2-noexp", "v3")
+
+
+def v2_guard(v: vision.Verdict) -> vision.Verdict:
+    """The pre-0.9.0 guard on top of the current one: detached_part needed the part fully visible."""
+    if v.status == "failure" and v.issue == "detached_part" and v.part_visible != "fully":
+        v.status, v.confidence = "warning", min(v.confidence, 0.5)
+        v.downgraded = f"detached_part claimed but part is {v.part_visible} visible"
+    return v
+
+
+def assess(variant: str, judge, current, reference, context, expected=None, layout=None) -> vision.Verdict:
+    if variant == "v3":
+        return judge.assess(current, reference, context, expected, layout=layout)
+    v = judge.assess(current, reference, context, expected)
+    return v2_guard(v) if variant.startswith("v2") else v
+
+
 LEGACY_CONTEXT = ("state=PRINTING progress=~70% nozzle=250/250C bed=90/90C hotend_fan=4700rpm "
                   "print_fan=1800rpm flow=100% speed=100%\n{ref}")
 
 
 def make_judges(cfg_path: str, variants: list[str], provider: str = None, model: str = None) -> dict:
     """Judges for the API variants; provider/model default to the config (ai_provider, model_id)."""
-    needed = [v for v in variants if v in ("v1", "v2", "v2-noexp")]
+    needed = [v for v in variants if v in API_VARIANTS]
     if not needed:
         return {}
     cfg = config.load(cfg_path)
@@ -86,7 +145,9 @@ def make_judges(cfg_path: str, variants: list[str], provider: str = None, model:
     print(f"model: {provider}:{model_id}")
     args = (cfg.aws_region, model_id, cfg.aws_access_key_id, cfg.aws_secret_access_key)
     kw = {"provider": provider, "api_key": cfg.anthropic_api_key}
-    judges = {"v2": lambda: vision.VisionJudge(*args, **kw), "v2-noexp": lambda: vision.VisionJudge(*args, **kw),
+    judges = {"v3": lambda: vision.VisionJudge(*args, **kw),
+              "v2": lambda: vision.VisionJudge(*args, system_prompt=V2_PROMPT, **kw),
+              "v2-noexp": lambda: vision.VisionJudge(*args, system_prompt=V2_PROMPT, **kw),
               "v1": lambda: vision.VisionJudge(*args, system_prompt=V1_PROMPT, tool=V1_TOOL, **kw)}
     return {v: judges[v]() for v in needed}
 
@@ -103,7 +164,7 @@ def read(path):
 # ---------------------------------------------------------------- labelled dataset
 def run_dataset(args) -> None:
     variants = args.variants.split(",")
-    unknown = set(variants) - {"recorded", "v1", "v2", "v2-noexp"}
+    unknown = set(variants) - {"recorded", *API_VARIANTS}
     if unknown:
         sys.exit(f"unknown variants: {unknown}")
     judges = make_judges(args.config, variants, args.provider, args.model)
@@ -130,11 +191,13 @@ def run_dataset(args) -> None:
             else:
                 ref_path = os.path.join(folder, "reference.jpg")
                 exp_path = os.path.join(folder, "expected.jpg")
-                use_exp = variant == "v2" and os.path.isfile(exp_path)
-                verdict = judges[variant].assess(read(os.path.join(folder, "current.jpg")),
-                                                 read(ref_path) if os.path.isfile(ref_path) else None,
-                                                 m.get("context", ""),
-                                                 read(exp_path) if use_exp else None)
+                lay_path = os.path.join(folder, "layout.jpg")
+                use_exp = variant in ("v2", "v3") and os.path.isfile(exp_path)
+                verdict = assess(variant, judges[variant], read(os.path.join(folder, "current.jpg")),
+                                 read(ref_path) if os.path.isfile(ref_path) else None,
+                                 m.get("context", ""),
+                                 read(exp_path) if use_exp else None,
+                                 read(lay_path) if variant == "v3" and os.path.isfile(lay_path) else None)
                 cost += usage_cost(judges[variant])
                 v = verdict.as_dict()
             rows[variant].append({**truth, "id": m["id"], "status": v["status"], "issue": v["issue"],
@@ -175,7 +238,7 @@ def run_legacy(args) -> None:
         prev = path
         for variant in variants:
             for run in range(args.runs):
-                v = judges[variant].assess(cur, ref, LEGACY_CONTEXT.format(ref=ref_note))
+                v = assess(variant, judges[variant], cur, ref, LEGACY_CONTEXT.format(ref=ref_note))
                 cost += usage_cost(judges[variant])
                 results.append({"frame": os.path.basename(path), "variant": variant, "run": run,
                                 "has_ref": ref is not None, **v.as_dict()})
@@ -197,7 +260,7 @@ def main() -> None:
     ap.add_argument("folder", nargs="?", help="legacy: folder with flagged-*.jpg from a good print")
     ap.add_argument("--dataset", help="folder of labelled samples (<id>/meta.json, current.jpg, reference.jpg)")
     ap.add_argument("--config", default="config.local.json")
-    ap.add_argument("--variants", default=None, help="dataset: recorded,v2,v2-noexp,v1   legacy: v1,v2")
+    ap.add_argument("--variants", default=None, help="dataset: recorded,v3,v2,v2-noexp,v1   legacy: v1,v2,v3")
     ap.add_argument("--positive", default="failure", help="model statuses counted as an alarm, e.g. failure,warning")
     ap.add_argument("--runs", type=int, default=1, help="legacy mode only")
     ap.add_argument("--provider", choices=["bedrock", "anthropic"], help="override ai_provider from the config")

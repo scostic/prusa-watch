@@ -1,6 +1,6 @@
 """Labelled sample store: frames + context + model verdict + (later) human ground truth.
 
-Layout: <root>/<sample_id>/{current.jpg, reference.jpg?, expected.jpg?, meta.json}
+Layout: <root>/<sample_id>/{current.jpg, reference.jpg?, expected.jpg?, layout.jpg?, meta.json}
 meta["label"] is None until a human labels the sample:
     {"truth": "ok" | "failure", "issue": "<issue or none>", "source": "web|button", "at": iso-time}
 """
@@ -28,7 +28,8 @@ class Dataset:
 
     # ---------- writing ----------
     def save(self, t: float, job_id, current: bytes, reference: Optional[bytes], context: str,
-             verdict: dict, model: str, force: bool = False, expected: Optional[bytes] = None) -> Optional[str]:
+             verdict: dict, model: str, force: bool = False, expected: Optional[bytes] = None,
+             layout: Optional[bytes] = None) -> Optional[str]:
         """Store a sample. Flagged verdicts are always kept, 'ok' ones 1 in ok_every (or when forced)."""
         flagged = verdict.get("status") in FLAGGED
         if not (flagged or force):
@@ -41,13 +42,14 @@ class Dataset:
             os.makedirs(path, exist_ok=True)
             with open(os.path.join(path, "current.jpg"), "wb") as f:
                 f.write(current)
-            for name, data in (("reference.jpg", reference), ("expected.jpg", expected)):
+            for name, data in (("reference.jpg", reference), ("expected.jpg", expected), ("layout.jpg", layout)):
                 if data:
                     with open(os.path.join(path, name), "wb") as f:
                         f.write(data)
             meta = {"id": sid, "time": datetime.fromtimestamp(t).isoformat(timespec="seconds"),
                     "job_id": job_id, "context": context, "verdict": verdict, "model": model,
-                    "has_reference": bool(reference), "has_expected": bool(expected), "label": None}
+                    "has_reference": bool(reference), "has_expected": bool(expected),
+                    "has_layout": bool(layout), "label": None}
             self._write_meta(sid, meta)
         except OSError as e:
             log.warning("Could not save sample %s: %s", sid, e)
@@ -86,7 +88,7 @@ class Dataset:
             return None
 
     def image_path(self, sid: str, which: str) -> Optional[str]:
-        if not self._safe(sid) or which not in ("current", "reference", "expected"):
+        if not self._safe(sid) or which not in ("current", "reference", "expected", "layout"):
             return None
         p = os.path.join(self.root, sid, f"{which}.jpg")
         return p if os.path.isfile(p) else None

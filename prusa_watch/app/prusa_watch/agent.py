@@ -79,8 +79,10 @@ class Agent:
         self.last_check: Optional[dict] = None          # args to (force-)save the latest check as a sample
         self.button_seen: dict[str, Optional[str]] = {}
         self.watchdog = Watchdog(cfg.failure_threshold, cfg.min_confidence,
-                                 cfg.alert_cooldown_min * 60, cfg.auto_action, cfg.auto_action_threshold)
+                                 cfg.alert_cooldown_min * 60, cfg.auto_action, cfg.auto_action_threshold,
+                                 cfg.warning_threshold)
         self.history: deque[Frame] = deque()
+        self.layout: Optional[Frame] = None            # first-layer frame: where the parts sit on the sheet
         self.prev_state: Optional[str] = None
         self.camera_failures = 0
         self.camera_alerted = False
@@ -210,7 +212,8 @@ class Agent:
                     streak=self.watchdog.streak, blind=self.blind_alerted,
                     last_check_age_s=round(now - self.last_good_check) if self.last_good_check else None)
 
-    def _confirm(self, first: Verdict, ref: Optional[Frame], context: list[str]) -> tuple[Verdict, dict]:
+    def _confirm(self, first: Verdict, ref: Optional[Frame], context: list[str],
+                 layout: Optional[bytes] = None) -> tuple[Verdict, dict]:
         """Second opinion on a fresh frame (bed/head in a different position) before a failure counts."""
         time.sleep(CONFIRM_DELAY_S)
         jpeg = self._grab()
@@ -220,7 +223,7 @@ class Agent:
             jpeg, ref.jpeg if ref else None,
             "\n".join(context + ["This is a confirmation frame taken a few seconds after a suspected "
                                  f"{first.issue}. Judge it independently."]),
-            self.expected_jpeg)
+            self.expected_jpeg, layout=layout)
         info = {"confirm_status": second.status, "confirm_issue": second.issue,
                 "confirm_confidence": round(second.confidence, 2)}
         if second.is_failure:
@@ -373,6 +376,7 @@ class Agent:
             log.info("New job %s detected", st.job_id)
             self.watchdog.new_job(st.job_id)
             self.history.clear()
+            self.layout = None
             self.last_verdict = None
             self.energy.reset()
 
@@ -452,9 +456,16 @@ class Agent:
                 context.append(f"Z moved {st.axis_z - ref.z:+.2f} mm since the reference frame.")
         else:
             context.append("No reference frame yet (first check of this print).")
+        layout = None
+        if self.layout is not None and self.layout is not ref:
+            layout = self.layout.jpeg
+            z = f" at Z={self.layout.z:.2f} mm" if self.layout.z is not None else ""
+            context.append(f"LAYOUT frame taken{z}, {(now - self.layout.t) / 60:.0f} min ago, with all parts in place.")
+        metrics["has_layout"] = layout is not None
 
         try:
-            verdict = self.judge.assess(jpeg, ref.jpeg if ref else None, "\n".join(context), expected)
+            verdict = self.judge.assess(jpeg, ref.jpeg if ref else None, "\n".join(context), expected,
+                                        layout=layout)
         except Exception as e:
             log.warning("AI call failed (%s:%s): %s", self.cfg.ai_provider, self.cfg.model_id, e)
             self._event("error", st, component="ai", provider=self.cfg.ai_provider,
@@ -468,7 +479,7 @@ class Agent:
             self.blind_alerted = False
         usage = dict(self.judge.last_usage)
         if verdict.is_failure and self.cfg.confirm_failures:
-            verdict, confirm = self._confirm(verdict, ref, context)
+            verdict, confirm = self._confirm(verdict, ref, context, layout)
             metrics.update(confirm)
             for k in ("input_tokens", "output_tokens", "latency_ms", "cost_usd"):
                 if k in usage or k in self.judge.last_usage:
@@ -481,7 +492,7 @@ class Agent:
         self._save(jpeg, flagged=verdict.status in ("warning", "failure"))
         self.last_check = {"t": now, "job_id": st.job_id, "current": jpeg,
                            "reference": ref.jpeg if ref else None, "context": "\n".join(context), "expected": expected,
-                           "verdict": verdict.as_dict()}
+                           "layout": layout, "verdict": verdict.as_dict()}
         sample_id = self._save_sample()
 
         decision = self.watchdog.observe(verdict, now)
@@ -499,12 +510,24 @@ class Agent:
                     log.error(action_note)
 
         if decision.alert:
-            verb = {"pause": "PAUSED", "stop": "STOPPED"}.get(decision.action, "Possible failure")
-            subject = f"[Prusa Watch] {verb}: {verdict.issue.replace('_', ' ')}"
-            extra = (f"{self.watchdog.streak} consecutive failure verdicts.\n{action_note}").strip()
+            issue = verdict.issue.replace("_", " ")
+            if decision.reason == "warnings":
+                subject = f"[Prusa Watch] Suspicious print, please look: {issue}"
+                extra = (f"{self.watchdog.warn_streak} suspicious verdicts in a row (warnings or unconfirmed "
+                         f"failures). Not sure enough to call it a failure - have a look at the printer.")
+            else:
+                verb = {"pause": "PAUSED", "stop": "STOPPED"}.get(decision.action, "Possible failure")
+                subject = f"[Prusa Watch] {verb}: {issue}"
+                extra = (f"{self.watchdog.streak} consecutive failure verdicts.\n{action_note}").strip()
             self._email(subject, self._status_body(st, verdict, extra), jpeg)
 
-        self._event("check", st, verdict, streak=self.watchdog.streak, alert=decision.alert,
+        frame = Frame(now, jpeg, thumb, st.axis_z)
+        if self.cfg.layout_reference and self.layout is None and verdict.status == "ok":
+            self.layout = frame
+            metrics["layout_set"] = True
+            log.info("Layout reference set (Z=%s)", st.axis_z)
+        self._event("check", st, verdict, streak=self.watchdog.streak, warn_streak=self.watchdog.warn_streak,
+                    alert=decision.alert, alert_reason=decision.reason,
                     action=decision.action, action_result=action_note or None, sample=sample_id,
                     has_expected=expected is not None,
                     **metrics, **usage)
@@ -513,7 +536,7 @@ class Agent:
             description=verdict.description, streak=self.watchdog.streak, part_visible=verdict.part_visible,
             last_check=datetime.now().isoformat(timespec="seconds"), **self._ha_attrs(st),
         )
-        self.history.append(Frame(now, jpeg, thumb, st.axis_z))
+        self.history.append(frame)
         self._prune(now)
 
     def run(self, once: bool = False) -> None:

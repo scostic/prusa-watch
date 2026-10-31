@@ -39,8 +39,12 @@ flowchart LR
   visual evidence.
 - **Knows what it should be looking at:** the slicer thumbnail embedded in the G-code is sent along as an
   "expected" image, so a lattice sphere or a thin tower isn't mistaken for a defect (or vice versa).
+- **Checks the layout on the bed:** a frame from the first layers is kept as the "layout" of the print;
+  every check compares where each part sits on the bed sheet with it, so a part that came loose, was
+  dragged by the nozzle or is simply missing is caught even when the rest is hidden behind the head.
 - **Built to avoid false alarms:** an email only after 3 consecutive confident failures, every failure is
-  re-checked on a second frame, and a guard rule refuses "detached part" unless the part is fully visible.
+  re-checked on a second frame, and a guard rule refuses "detached part" when the part cannot be seen.
+  Repeated warnings (3 in a row) send a softer "suspicious print, please look" email - never a pause/stop.
 - **Printer-side events:** immediate email on PrusaLink `ERROR` / `ATTENTION` (runout, thermal, fan),
   camera unreachable, and "print finished" with a final photo.
 - **Watching the watchdog:** a CloudWatch heartbeat alarm emails you if the add-on, the Pi or your internet
@@ -93,6 +97,27 @@ The same 33 frames on the newer model (current prompt):
 |---|---|---|
 | false alarms | 2 / 33 | **0 / 33** |
 | part judged *hidden* / *partly visible* | 24 / 6 | **4 / 29** |
+
+### The missed-failure story
+
+Then the opposite happened. Several flat PETG parts came loose at 10 % and the nozzle dragged them across
+the bed - and every check said `ok` (one weak `warning`). The anti-false-alarm prompt had taught the model
+to *ignore* where the parts are, the guard demanded a fully visible part, and warnings never built up to
+an alert. Version 0.9.0 (prompt v3):
+
+- judges positions **relative to the bed sheet and the other parts**, never the image frame;
+- gets a fixed **LAYOUT** frame from the first layers of the print as ground truth for where each part sits;
+- tells *hidden behind the head* (normal) from *missing from a visible, empty patch of sheet* (detached);
+- the guard only downgrades `detached_part` when the part is not visible at all;
+- 3 suspicious verdicts in a row (warnings or unconfirmed failures) now email.
+
+| Haiku 5.5 | prompt v2 | **prompt v3** |
+|---|---|---|
+| the 33 frames of the good print (false alarms) | 0 / 33 | **0 / 33** |
+| frame of the failed print, parts dragged away | `ok` (missed) | **`failure / detached_part`** |
+| frame of the same print 2 min earlier, all fine | `ok` | `ok` |
+
+One real failure is not a benchmark - label your own failures (below) and measure.
 | cost for the 33 frames | ~$0.10 | **$0.015** |
 
 Haiku 4.5 mostly avoided false alarms by deciding it couldn't see the part; Haiku 5.5 actually recognises
@@ -207,9 +232,10 @@ False alarms are easy to measure; missed failures are not. Prusa Watch therefore
    *Missed failure* saves the current frame as a real failure the model didn't catch.
 3. Copy the folder to your PC and measure:
    ```bash
-   PYTHONPATH=prusa_watch/app python eval/replay.py --dataset eval/dataset --variants recorded,v2
+   PYTHONPATH=prusa_watch/app python eval/replay.py --dataset eval/dataset --variants recorded,v2,v3
    ```
-   `recorded` scores what the live model said (free); `v2`/`v1` re-run the current/original prompt.
+   `recorded` scores what the live model said (free); `v3` re-runs the current prompt (with the layout frame
+   when the sample has one), `v2`/`v1` the earlier ones.
    Output: confusion matrix, **recall (failures caught)**, precision, false-alarm rate, recall per issue.
 
 ## Develop and test locally

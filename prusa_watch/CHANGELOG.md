@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0
+- **Catches parts that come loose.** A real failure (flat PETG parts torn off and dragged by the nozzle) was
+  judged `ok` because the v2 prompt told the model to ignore where the part is. Prompt **v3** checks the
+  layout of the parts on the bed sheet (relative to the sheet and to each other, not the image), tells
+  hidden-behind-the-head from missing, and treats a part that moved, tipped or vanished as `detached_part`.
+- **Layout frame:** the first good frame of each print (first layers) is kept and sent with every check as
+  ground truth for where the parts are. Stored with samples (`layout.jpg`) and shown in the panel.
+  Option `layout_reference` (on).
+- Guard relaxed: `detached_part` now counts with the part partly visible; still downgraded when hidden.
+- **Warning streak:** `warning_threshold` (3) suspicious verdicts in a row send a "Suspicious print, please
+  look" email. They never pause/stop the printer. Check events carry `warn_streak` and `alert_reason`.
+- `eval/replay.py`: variant `v3` (current), `v2` reproduces the 0.3-0.8 prompt and guard.
+- Replay (Haiku 5.5): good print 0/33 false alarms with v2 and v3; the failed frame v2 `ok`, v3 `failure`.
+
 ## 0.8.4
 - Fix: the `energy` event at the end of a print now carries the `job_id` of the print (PrusaLink reports no
   job id once the job is FINISHED), so energy and cost can be matched to their print.

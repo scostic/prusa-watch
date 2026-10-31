@@ -1,3 +1,3 @@
 """Prusa Watch - camera + telemetry print-failure watchdog."""
 
-__version__ = "0.8.4"
+__version__ = "0.9.0"

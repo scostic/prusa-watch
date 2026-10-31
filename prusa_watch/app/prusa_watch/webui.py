@@ -70,7 +70,8 @@ function card(m){
      <span class="id">${esc(m.time)} · job ${esc(m.job_id)} · ${esc(m.id)}</span></div>
    <div class="imgs"><figure><img loading="lazy" src="img/${m.id}/current.jpg" alt="current frame"><figcaption>current</figcaption></figure>
      ${ref ? `<figure><img loading="lazy" src="img/${m.id}/reference.jpg" alt="reference frame"><figcaption>reference</figcaption></figure>` : ""}
-     ${m.has_expected ? `<figure><img loading="lazy" src="img/${m.id}/expected.jpg" alt="slicer preview"><figcaption>expected (slicer preview)</figcaption></figure>` : ""}</div>
+     ${m.has_expected ? `<figure><img loading="lazy" src="img/${m.id}/expected.jpg" alt="slicer preview"><figcaption>expected (slicer preview)</figcaption></figure>` : ""}
+     ${m.has_layout ? `<figure><img loading="lazy" src="img/${m.id}/layout.jpg" alt="layout frame"><figcaption>layout (first layers)</figcaption></figure>` : ""}</div>
    <p class="desc">${esc(v.description)}</p>
    ${v.evidence ? `<p class="ev">Evidence: ${esc(v.evidence)}</p>` : ""}
    ${v.downgraded ? `<p class="ev">Downgraded: ${esc(v.downgraded)}</p>` : ""}
@@ -132,7 +133,7 @@ def make_handler(ds: Dataset):
             if parts == ["api", "samples"]:
                 filt = parse_qs(url.query).get("filter", ["unlabelled"])[0]
                 return self._json(ds.samples(filt))
-            if len(parts) == 3 and parts[0] == "img" and parts[2] in ("current.jpg", "reference.jpg", "expected.jpg"):
+            if len(parts) == 3 and parts[0] == "img" and parts[2] in ("current.jpg", "reference.jpg", "expected.jpg", "layout.jpg"):
                 path = ds.image_path(parts[1], parts[2][:-4])
                 if path:
                     with open(path, "rb") as f:

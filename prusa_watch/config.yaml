@@ -1,5 +1,5 @@
 name: Prusa Watch
-version: "0.8.4"
+version: "0.9.0"
 slug: prusa_watch
 url: https://github.com/scostic/prusa-watch
 description: AI print-failure watchdog for a Prusa printer + Buddy3D camera (Amazon Bedrock vision, SES email alerts)
@@ -37,6 +37,8 @@ options:
   failure_threshold: 3
   min_confidence: 0.6
   confirm_failures: true
+  warning_threshold: 3
+  layout_reference: true
   use_gcode_thumbnail: true
   skip_preheat: true
   alert_cooldown_min: 30
@@ -82,6 +84,8 @@ schema:
   failure_threshold: int(1,20)
   min_confidence: float(0.3,1)
   confirm_failures: bool
+  warning_threshold: int(0,20)
+  layout_reference: bool
   use_gcode_thumbnail: bool
   skip_preheat: bool
   alert_cooldown_min: int(1,1440)

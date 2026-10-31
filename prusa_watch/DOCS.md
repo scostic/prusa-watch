@@ -30,6 +30,8 @@ At every start the add-on checks the AI provider (free for the Claude API) and l
 | `compare_minutes` | age of the reference frame used to judge growth (5) |
 | `failure_threshold`, `min_confidence` | consecutive confident failure verdicts before an email (3, 0.6) |
 | `confirm_failures` | re-check every failure on a second frame before it counts (on) |
+| `warning_threshold` | this many suspicious verdicts in a row (warnings or unconfirmed failures) send a "suspicious print" email, never a pause/stop; 0 = off (3) |
+| `layout_reference` | keep the first good frame of each print (first layers) as the layout the model checks every frame against (on) |
 | `use_gcode_thumbnail` | also show the model the slicer preview of the object from the G-code (on) |
 | `skip_preheat` | no AI checks while heating up at 0% progress (on) |
 | `alert_cooldown_min` | minimum minutes between repeated failure emails (30) |

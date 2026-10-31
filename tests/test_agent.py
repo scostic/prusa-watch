@@ -56,7 +56,9 @@ class AgentTickTest(unittest.TestCase):
         for _ in range(3):
             a.tick()
         self.assertEqual(a.watchdog.streak, 0)
-        a.mailer.send.assert_not_called()
+        # no failure alert - but 3 unconfirmed failures in a row are a warning streak (0.9.0)
+        a.mailer.send.assert_called_once()
+        self.assertIn("Suspicious", a.mailer.send.call_args.args[0])
         self.assertEqual(a.last_verdict.status, "warning")
         self.assertIn("not confirmed", a.last_verdict.downgraded)
         check = a.hec.send.call_args.args[0]
@@ -207,6 +209,35 @@ class AgentTickTest(unittest.TestCase):
         a.judge.assess.return_value = Verdict("ok", "none", 0.9, "fine")
         a.tick()
         a.printer.job.assert_not_called()
+
+    def test_layout_frame_kept_for_the_job(self, grab, _thumb):
+        a = make_agent(compare_minutes=1)
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=21, axis_z=0.2)
+        grab.side_effect = [b"F0", b"F1", b"F2", b"F3"]
+        a.judge.assess.side_effect = [Verdict("warning", "other", 0.4, "odd"), Verdict("ok", "none", 0.9, "fine"),
+                                      Verdict("ok", "none", 0.9, "fine"), Verdict("ok", "none", 0.9, "fine")]
+        with mock.patch.object(agent_mod.time, "time") as clock:
+            for minute in range(4):
+                clock.return_value = 1000.0 + minute * 60
+                a.tick()
+        layouts = [c.kwargs.get("layout") for c in a.judge.assess.call_args_list]
+        self.assertEqual(layouts, [None, None, None, b"F1"])   # 1st ok frame; not resent while it is the reference
+        self.assertIn("LAYOUT frame taken at Z=0.20 mm", a.judge.assess.call_args.args[2])
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=22)
+        grab.side_effect = None
+        a.tick()
+        self.assertIsNone(a.judge.assess.call_args.kwargs["layout"])            # new job, new layout
+
+    def test_warning_streak_emails(self, _grab, _thumb):
+        a = make_agent(warning_threshold=3)
+        a.printer.status.return_value = PrinterStatus("PRINTING", job_id=9)
+        a.judge.assess.return_value = Verdict("warning", "detached_part", 0.5, "part moved?")
+        for _ in range(3):
+            a.tick()
+        a.mailer.send.assert_called_once()
+        self.assertIn("Suspicious", a.mailer.send.call_args.args[0])
+        check = a.hec.send.call_args.args[0]
+        self.assertEqual((check["alert_reason"], check["warn_streak"]), ("warnings", 3))
 
     def test_heartbeat_throttled(self, _grab, _thumb):
         a = make_agent(heartbeat_min=5)
